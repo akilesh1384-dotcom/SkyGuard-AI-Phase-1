@@ -17,6 +17,13 @@ export interface SensorReading {
   pressure: number;
 }
 
+export interface MlReading {
+  timestamp: string;
+  temperature: number;
+  humidity: number;
+  pressure: number;
+}
+
 export type SimulatorMode = typeof SimulatorMode[keyof typeof SimulatorMode];
 
 
@@ -65,6 +72,14 @@ export type GetReadingHistoryParams = {
 /**
  * @minimum 1
  * @maximum 240
+ */
+limit?: number;
+};
+
+export type GetMlReadingsParams = {
+/**
+ * @minimum 1
+ * @maximum 10000
  */
 limit?: number;
 };

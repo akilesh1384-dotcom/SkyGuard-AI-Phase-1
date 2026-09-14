@@ -64,6 +64,28 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SensorReading"
+  /ml/readings:
+    get:
+      operationId: getMlReadings
+      tags: [monitoring]
+      summary: Get chronological readings for ML workflows
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+      responses:
+        "200":
+          description: Timestamped readings ordered chronologically
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MlReading"
   /status:
     get:
       operationId: getSimulatorStatus
@@ -161,6 +183,23 @@ components:
           type: number
       required:
         - id
+        - timestamp
+        - temperature
+        - humidity
+        - pressure
+    MlReading:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        temperature:
+          type: number
+        humidity:
+          type: number
+        pressure:
+          type: number
+      required:
         - timestamp
         - temperature
         - humidity

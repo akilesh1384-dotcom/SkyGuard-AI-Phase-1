@@ -7,8 +7,10 @@
  */
 
 export * from './errorResponse';
+export * from './getMlReadingsParams';
 export * from './getReadingHistoryParams';
 export * from './healthStatus';
+export * from './mlReading';
 export * from './sensorReading';
 export * from './simulatorMode';
 export * from './simulatorModeInput';

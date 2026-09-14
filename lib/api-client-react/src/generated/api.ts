@@ -21,8 +21,10 @@ import type {
 
 import type {
   ErrorResponse,
+  GetMlReadingsParams,
   GetReadingHistoryParams,
   HealthStatus,
+  MlReading,
   SensorReading,
   SimulatorModeInput,
   SimulatorStatus
@@ -282,6 +284,90 @@ export function useGetReadingHistory<TData = Awaited<ReturnType<typeof getReadin
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetReadingHistoryQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMlReadingsUrl = (params?: GetMlReadingsParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/ml/readings?${stringifiedParams}` : `/api/ml/readings`
+}
+
+/**
+ * @summary Get chronological readings for ML workflows
+ */
+export const getMlReadings = async (params?: GetMlReadingsParams, options?: Parameters<typeof customFetch>[1]): Promise<MlReading[]> => {
+
+  return customFetch<MlReading[]>(getGetMlReadingsUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMlReadingsQueryKey = (params?: GetMlReadingsParams,) => {
+    return [
+    `/api/ml/readings`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getGetMlReadingsQueryOptions = <TData = Awaited<ReturnType<typeof getMlReadings>>, TError = ErrorType<unknown>>(params?: GetMlReadingsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMlReadings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMlReadingsQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMlReadings>>> = ({ signal }) => getMlReadings(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMlReadings>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMlReadingsQueryResult = NonNullable<Awaited<ReturnType<typeof getMlReadings>>>
+export type GetMlReadingsQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get chronological readings for ML workflows
+ */
+
+export function useGetMlReadings<TData = Awaited<ReturnType<typeof getMlReadings>>, TError = ErrorType<unknown>>(
+ params?: GetMlReadingsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMlReadings>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMlReadingsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

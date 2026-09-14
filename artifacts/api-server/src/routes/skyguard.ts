@@ -1,6 +1,9 @@
+import { asc } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   GetLatestReadingResponse,
+  GetMlReadingsQueryParams,
+  GetMlReadingsResponse,
   GetReadingHistoryQueryParams,
   GetReadingHistoryResponse,
   GetSimulatorStatusResponse,
@@ -11,6 +14,7 @@ import {
   ResetSimulatorResponse,
   SimulatorMode,
 } from "@workspace/api-zod";
+import { db, sensorReadingsTable } from "@workspace/db";
 import {
   skyguardSimulator,
   type SimulatorModeValue,
@@ -21,6 +25,31 @@ const router: IRouter = Router();
 router.get("/latest", async (_req, res): Promise<void> => {
   const latest = await skyguardSimulator.getLatest();
   res.json(GetLatestReadingResponse.parse(latest));
+});
+
+router.get("/ml/readings", async (req, res): Promise<void> => {
+  const query = GetMlReadingsQueryParams.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: query.error.message });
+    return;
+  }
+
+  const baseQuery = db
+    .select({
+      timestamp: sensorReadingsTable.timestamp,
+      temperature: sensorReadingsTable.temperature,
+      humidity: sensorReadingsTable.humidity,
+      pressure: sensorReadingsTable.pressure,
+    })
+    .from(sensorReadingsTable)
+    .orderBy(asc(sensorReadingsTable.timestamp));
+
+  const readings =
+    query.data.limit === undefined
+      ? await baseQuery
+      : await baseQuery.limit(query.data.limit);
+
+  res.json(GetMlReadingsResponse.parse(readings));
 });
 
 router.get("/history", async (req, res): Promise<void> => {

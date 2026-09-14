@@ -52,6 +52,26 @@ export const GetReadingHistoryResponse = zod.array(GetReadingHistoryResponseItem
 
 
 /**
+ * @summary Get chronological readings for ML workflows
+ */
+export const getMlReadingsQueryLimitMax = 10000;
+
+
+
+export const GetMlReadingsQueryParams = zod.object({
+  "limit": zod.coerce.number().int().min(1).max(getMlReadingsQueryLimitMax).optional()
+})
+
+export const GetMlReadingsResponseItem = zod.object({
+  "timestamp": zod.coerce.date(),
+  "temperature": zod.number(),
+  "humidity": zod.number(),
+  "pressure": zod.number()
+})
+export const GetMlReadingsResponse = zod.array(GetMlReadingsResponseItem)
+
+
+/**
  * @summary Get simulator and connection status
  */
 export const getSimulatorStatusResponseConnectedClientsMin = 0;
