@@ -1,10 +1,11 @@
-# [Project name]
+# SkyGuard AI
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Live automatic weather station monitoring with a simulator, persistent readings, and a WebSocket dashboard.
 
 ## Run & Operate
 
-- `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
+- `pnpm --filter @workspace/api-server run dev` — run the API server (port 8080)
+- `pnpm --filter @workspace/skyguard-ai run dev` — run the dashboard
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -14,7 +15,7 @@ _Replace the heading above with the project's name, and this line with one sente
 ## Stack
 
 - pnpm workspaces, Node.js 24, TypeScript 5.9
-- API: Express 5
+- API: Express 5 + WebSocket (`ws`)
 - DB: PostgreSQL + Drizzle ORM
 - Validation: Zod (`zod/v4`), `drizzle-zod`
 - API codegen: Orval (from OpenAPI spec)
@@ -22,15 +23,22 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/skyguard-ai/src/App.tsx` — live dashboard, charts, controls, and WebSocket consumer
+- `artifacts/api-server/src/lib/skyguard.ts` — simulator modes, validation, ingestion, persistence, and broadcast
+- `artifacts/api-server/src/routes/skyguard.ts` — monitoring and simulator REST endpoints
+- `lib/api-spec/openapi.yaml` — REST contract source of truth
+- `lib/db/src/schema/skyguard.ts` — sensor readings and simulator ground-truth tables
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The simulator and ingestion path are separate so future ESP32/BME280 or MQTT adapters can call the same validation/storage boundary.
+- WebSocket messages are additive to the REST contract: REST hydrates history and status, then WebSocket messages keep the dashboard current.
+- Ground-truth events are created when a fault mode starts and closed when it changes, stops, or resets.
+- The existing workspace uses managed PostgreSQL and Drizzle, so SkyGuard uses that shared persistence foundation instead of adding a second database runtime.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+SkyGuard AI Phase 1 shows live temperature, humidity, and pressure telemetry; renders three time-series charts; exposes simulator controls; and stores sensor readings plus anomaly ground truth for future ML evaluation.
 
 ## User preferences
 
@@ -38,7 +46,9 @@ _Populate as you build — explicit user instructions worth remembering across s
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- WebSocket preview routing requires `/ws` in the API artifact's path list.
+- Run API codegen after changing `lib/api-spec/openapi.yaml`.
+- The simulator starts in `SIMULATING` mode when the API server boots.
 
 ## Pointers
 

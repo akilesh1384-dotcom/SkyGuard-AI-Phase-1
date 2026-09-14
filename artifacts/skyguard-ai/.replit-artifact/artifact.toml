@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "SkyGuard AI"
+description = "A live automatic weather station monitoring dashboard for Smart India Hackathon Phase 1, showing simulator-driven temperature, humidity, pressure, system status, and WebSocket updates."
+version = "1.0.0"
+id = "artifacts/skyguard-ai"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 22679
+
+[services.development]
+run = "pnpm --filter @workspace/skyguard-ai run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/skyguard-ai", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/skyguard-ai/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "22679"
+BASE_PATH = "/"

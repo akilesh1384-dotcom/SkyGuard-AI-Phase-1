@@ -1,0 +1,151 @@
+@import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&family=Space+Grotesk:wght@500;600;700&display=swap');
+@import 'tailwindcss';
+@import 'tw-animate-css';
+@plugin "@tailwindcss/typography";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-card-border: hsl(var(--card-border));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-sidebar: hsl(var(--sidebar));
+  --color-sidebar-foreground: hsl(var(--sidebar-foreground));
+  --color-sidebar-border: hsl(var(--sidebar-border));
+  --font-sans: var(--app-font-sans);
+  --font-mono: var(--app-font-mono);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+}
+
+:root {
+  --background: 196 38% 95%;
+  --foreground: 205 43% 16%;
+  --border: 193 24% 84%;
+  --input: 193 28% 79%;
+  --ring: 186 81% 38%;
+  --card: 198 35% 98%;
+  --card-foreground: 205 43% 16%;
+  --card-border: 193 25% 86%;
+  --primary: 186 81% 34%;
+  --primary-foreground: 180 35% 97%;
+  --secondary: 197 33% 91%;
+  --secondary-foreground: 205 43% 21%;
+  --muted: 195 28% 91%;
+  --muted-foreground: 203 22% 45%;
+  --accent: 37 89% 56%;
+  --accent-foreground: 25 49% 17%;
+  --destructive: 4 69% 52%;
+  --destructive-foreground: 0 0% 98%;
+  --sidebar: 201 50% 12%;
+  --sidebar-foreground: 195 32% 88%;
+  --sidebar-border: 199 35% 24%;
+  --app-font-sans: 'Manrope', sans-serif;
+  --app-font-mono: 'DM Mono', monospace;
+  --font-display: 'Space Grotesk', sans-serif;
+  --radius: 0.9rem;
+  --elevate-1: rgba(28, 93, 108, 0.06);
+  --elevate-2: rgba(28, 93, 108, 0.11);
+}
+
+.dark {
+  --background: 201 44% 9%;
+  --foreground: 195 35% 92%;
+  --border: 198 31% 22%;
+  --input: 198 31% 26%;
+  --ring: 186 81% 48%;
+  --card: 201 39% 13%;
+  --card-foreground: 195 35% 92%;
+  --card-border: 198 30% 24%;
+  --primary: 186 81% 48%;
+  --primary-foreground: 201 44% 9%;
+  --secondary: 199 31% 19%;
+  --secondary-foreground: 195 35% 92%;
+  --muted: 200 32% 18%;
+  --muted-foreground: 197 18% 64%;
+  --accent: 37 89% 56%;
+  --accent-foreground: 25 49% 17%;
+  --destructive: 4 69% 57%;
+  --destructive-foreground: 0 0% 98%;
+  --sidebar: 201 47% 7%;
+  --sidebar-foreground: 195 35% 88%;
+  --sidebar-border: 198 30% 18%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground;
+    min-width: 320px;
+  }
+  button, select {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .font-display { font-family: var(--font-display); }
+  .font-data { font-family: var(--app-font-mono); }
+  .text-balance { text-wrap: balance; }
+  .hover-elevate:hover { background: var(--elevate-1); }
+}
+
+.skyguard-shell {
+  background:
+    radial-gradient(circle at 78% -10%, hsl(186 82% 74% / 0.24), transparent 28rem),
+    radial-gradient(circle at 10% 100%, hsl(35 85% 75% / 0.12), transparent 26rem),
+    hsl(var(--background));
+}
+.skyguard-sidebar {
+  background:
+    linear-gradient(155deg, hsl(201 50% 15%), hsl(201 50% 10%)),
+    hsl(var(--sidebar));
+  box-shadow: 18px 0 50px hsl(201 56% 9% / 0.12);
+}
+.skyguard-grid {
+  background-image: linear-gradient(hsl(193 30% 50% / .05) 1px, transparent 1px), linear-gradient(90deg, hsl(193 30% 50% / .05) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+.sg-panel {
+  border: 1px solid hsl(var(--card-border));
+  background: hsl(var(--card) / .86);
+  box-shadow: 0 16px 36px hsl(201 53% 19% / .055), inset 0 1px hsl(0 0% 100% / .5);
+  backdrop-filter: blur(14px);
+}
+.sg-panel-dark {
+  border: 1px solid hsl(198 32% 28%);
+  background: linear-gradient(145deg, hsl(199 41% 17%), hsl(201 43% 11%));
+  box-shadow: 0 18px 34px hsl(201 55% 7% / .2);
+}
+.reading-number {
+  letter-spacing: -0.07em;
+  font-variant-numeric: tabular-nums;
+}
+.soft-pulse { animation: softPulse 2.4s ease-in-out infinite; }
+.live-draw { animation: liveDraw 1.1s ease-out both; }
+.rise-in { animation: riseIn .6s cubic-bezier(.16, 1, .3, 1) both; }
+@keyframes softPulse { 0%,100% { opacity: .62; } 50% { opacity: 1; } }
+@keyframes liveDraw { from { opacity: .35; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes riseIn { from { opacity: 0; transform: translateY(9px); } to { opacity: 1; transform: translateY(0); } }
+@media (prefers-reduced-motion: reduce) {
+  .soft-pulse, .live-draw, .rise-in { animation: none; }
+}

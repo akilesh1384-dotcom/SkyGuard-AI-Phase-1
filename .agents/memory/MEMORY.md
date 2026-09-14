@@ -1,0 +1,1 @@
+- [WebSocket artifact routing](websocket-routing.md) — live upgrade paths must be explicitly forwarded by the API artifact.

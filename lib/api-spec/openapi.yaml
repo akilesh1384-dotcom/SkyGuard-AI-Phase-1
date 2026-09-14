@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: monitoring
+    description: Live weather station monitoring operations
+  - name: simulator
+    description: Sensor simulator controls
 paths:
   /healthz:
     get:
@@ -24,6 +28,114 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /latest:
+    get:
+      operationId: getLatestReading
+      tags: [monitoring]
+      summary: Get the latest sensor reading
+      responses:
+        "200":
+          description: Latest reading, or null when no reading has been received
+          content:
+            application/json:
+              schema:
+                type: ["object", "null"]
+                $ref: "#/components/schemas/SensorReading"
+  /history:
+    get:
+      operationId: getReadingHistory
+      tags: [monitoring]
+      summary: Get recent sensor readings
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 240
+            default: 60
+      responses:
+        "200":
+          description: Recent readings ordered oldest to newest
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SensorReading"
+  /status:
+    get:
+      operationId: getSimulatorStatus
+      tags: [monitoring]
+      summary: Get simulator and connection status
+      responses:
+        "200":
+          description: Current simulator status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulatorStatus"
+  /simulator/start:
+    post:
+      operationId: startSimulator
+      tags: [simulator]
+      summary: Start the sensor simulator
+      responses:
+        "200":
+          description: Simulator status after starting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulatorStatus"
+  /simulator/stop:
+    post:
+      operationId: stopSimulator
+      tags: [simulator]
+      summary: Stop the sensor simulator
+      responses:
+        "200":
+          description: Simulator status after stopping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulatorStatus"
+  /simulator/reset:
+    post:
+      operationId: resetSimulator
+      tags: [simulator]
+      summary: Reset simulator state and readings
+      responses:
+        "200":
+          description: Simulator status after reset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulatorStatus"
+  /simulator/mode:
+    post:
+      operationId: setSimulatorMode
+      tags: [simulator]
+      summary: Set the active simulator mode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SimulatorModeInput"
+      responses:
+        "200":
+          description: Simulator status after changing mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulatorStatus"
+        "400":
+          description: Invalid simulator mode
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
 components:
   schemas:
     HealthStatus:
@@ -33,4 +145,73 @@ components:
           type: string
       required:
         - status
+    SensorReading:
+      type: object
+      properties:
+        id:
+          type: integer
+        timestamp:
+          type: string
+          format: date-time
+        temperature:
+          type: number
+        humidity:
+          type: number
+        pressure:
+          type: number
+      required:
+        - id
+        - timestamp
+        - temperature
+        - humidity
+        - pressure
+    SimulatorMode:
+      type: string
+      enum:
+        - NORMAL
+        - TEMPERATURE_SPIKE
+        - TEMPERATURE_DROP
+        - HUMIDITY_SPIKE
+        - PRESSURE_ANOMALY
+        - FROZEN_SENSOR
+        - GRADUAL_DRIFT
+        - MISSING_DATA
+        - MULTIVARIATE_INCONSISTENCY
+    SimulatorModeInput:
+      type: object
+      properties:
+        mode:
+          $ref: "#/components/schemas/SimulatorMode"
+      required:
+        - mode
+    SimulatorStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [NORMAL, SIMULATING, STOPPED, ERROR]
+        mode:
+          $ref: "#/components/schemas/SimulatorMode"
+        connectedClients:
+          type: integer
+          minimum: 0
+        lastReadingAt:
+          type: ["string", "null"]
+          format: date-time
+        readingsStored:
+          type: integer
+          minimum: 0
+      required:
+        - status
+        - mode
+        - connectedClients
+        - lastReadingAt
+        - readingsStored
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required:
+        - error
 

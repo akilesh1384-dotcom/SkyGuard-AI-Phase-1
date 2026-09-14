@@ -1,0 +1,265 @@
+Build Phase 1 of a project called "SkyGuard AI" for Smart India Hackathon problem statement SIH26073.
+
+IMPORTANT:
+This is ONLY Phase 1. Do not implement advanced ML, SHAP, sensor-health prediction, ESP32 firmware, MQTT, or Edge AI yet.
+
+GOAL:
+Create a fully working software prototype with this flow:
+
+Sensor Simulator
+    ↓
+FastAPI Backend
+    ↓
+WebSocket
+    ↓
+Live Dashboard
+
+The simulator must generate realistic AWS readings for:
+- Temperature (°C)
+- Relative Humidity (%)
+- Atmospheric Pressure (hPa)
+
+The architecture must allow us to later replace the simulator with ESP32/BME280 + MQTT without changing the processing layer.
+
+TECH STACK:
+- Python 3
+- FastAPI
+- Uvicorn
+- SQLite
+- WebSocket
+- HTML/CSS/JavaScript
+- Chart.js
+- pandas and numpy may be used for data handling
+- Do not add unnecessary frameworks
+
+PROJECT STRUCTURE:
+
+skyguard/
+    main.py
+    simulator.py
+    database.py
+    models.py
+    requirements.txt
+    README.md
+
+    services/
+        __init__.py
+        sensor_service.py
+
+    templates/
+        index.html
+
+    static/
+        style.css
+        dashboard.js
+
+    tests/
+        __init__.py
+        test_simulator.py
+        test_api.py
+
+FUNCTIONAL REQUIREMENTS
+
+1. SENSOR SIMULATOR
+
+Generate one sensor reading approximately every second.
+
+Each reading must contain:
+
+{
+    "timestamp": "...",
+    "temperature": number,
+    "humidity": number,
+    "pressure": number
+}
+
+Make the generated data temporally realistic rather than independently random.
+
+Temperature should change gradually.
+Humidity should have some relationship with temperature.
+Pressure should change slowly.
+
+Provide these simulator modes:
+
+- NORMAL
+- TEMPERATURE_SPIKE
+- TEMPERATURE_DROP
+- HUMIDITY_SPIKE
+- PRESSURE_ANOMALY
+- FROZEN_SENSOR
+- GRADUAL_DRIFT
+- MISSING_DATA
+- MULTIVARIATE_INCONSISTENCY
+
+The simulator must be controllable from the dashboard.
+
+2. GROUND TRUTH
+
+Every injected simulator anomaly must have a ground-truth record containing:
+
+- fault type
+- affected variable
+- start timestamp
+- end timestamp
+
+This will later be used by the ML evaluation system.
+
+Do not implement ML evaluation yet.
+
+3. BACKEND
+
+Use FastAPI.
+
+Implement endpoints for:
+
+GET /
+GET /api/latest
+GET /api/history
+GET /api/status
+
+Also implement WebSocket:
+
+/ws
+
+The WebSocket should push newly generated sensor readings to connected clients.
+
+4. DATABASE
+
+Use SQLite.
+
+Store sensor readings with:
+
+- id
+- timestamp
+- temperature
+- humidity
+- pressure
+
+Also create a table for simulator events/ground truth.
+
+Keep database code isolated in database.py.
+
+5. DATA VALIDATION
+
+Before storing data, validate:
+
+- required fields exist
+- values are numeric
+- timestamp is valid
+- no duplicate timestamp is inserted
+
+Use sensible physical sanity limits, but DO NOT treat every extreme weather reading as an ML anomaly. This is only basic data validation.
+
+6. DASHBOARD
+
+Create a clean professional dashboard titled:
+
+SKYGUARD AI
+Intelligent Automatic Weather Station Monitoring
+
+Display:
+
+- Current temperature
+- Current humidity
+- Current pressure
+- System status
+- Current simulator mode
+
+Create three live Chart.js graphs:
+
+- Temperature vs time
+- Humidity vs time
+- Pressure vs time
+
+Display at least the latest 60 readings.
+
+The dashboard must update automatically through WebSocket without requiring page refresh.
+
+7. SIMULATOR CONTROLS
+
+Add controls:
+
+- Start
+- Stop
+- Select simulation mode
+- Reset simulation
+
+Show the currently active mode.
+
+When a fault mode is selected, the simulator should visibly generate that type of abnormal behaviour.
+
+8. STATUS
+
+Display one of:
+
+NORMAL
+SIMULATING
+STOPPED
+ERROR
+
+Do not implement ML-based anomaly labels yet.
+
+9. API/DATABASE SEPARATION
+
+Keep sensor ingestion separate from simulation.
+
+Create a clean function/interface that accepts a sensor reading.
+
+Later, MQTT/ESP32 input should be able to call this same ingestion path.
+
+10. TESTS
+
+Create basic tests for:
+
+- normal simulator output
+- required fields
+- data types
+- API availability
+- database insertion
+- simulator fault-mode activation
+
+11. README
+
+Document:
+
+- project purpose
+- setup
+- installation
+- how to run
+- project structure
+- available API endpoints
+- simulator modes
+- how the WebSocket works
+- future architecture
+
+12. IMPORTANT DEVELOPMENT RULES
+
+- Keep the implementation simple and reliable.
+- Do not create fake ML functionality.
+- Do not create fake anomaly scores.
+- Do not claim the simulator is real sensor data.
+- Do not hard-code dashboard values.
+- Use actual backend data.
+- Do not over-engineer authentication, cloud infrastructure, microservices, Kubernetes, etc.
+- Make the application runnable immediately after generation.
+
+FIRST ACCEPTANCE TEST:
+
+After implementation, I must be able to:
+
+1. Start the FastAPI application.
+2. Open the dashboard.
+3. See live temperature, humidity and pressure.
+4. See the three charts update automatically.
+5. Switch between simulator modes.
+6. See the simulated readings change accordingly.
+7. Stop and restart the simulator.
+8. Verify readings are stored in SQLite.
+9. Run the tests successfully.
+
+When finished, provide:
+- final file tree
+- dependencies
+- run command
+- brief explanation of each file
+- confirmation that the acceptance test works
