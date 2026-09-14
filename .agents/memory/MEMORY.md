@@ -1,1 +1,2 @@
 - [WebSocket artifact routing](websocket-routing.md) — live upgrade paths must be explicitly forwarded by the API artifact.
+- [Python service isolation](python-service-isolation.md) — keep Python dependency setup local to avoid unrelated root uv scaffolding.

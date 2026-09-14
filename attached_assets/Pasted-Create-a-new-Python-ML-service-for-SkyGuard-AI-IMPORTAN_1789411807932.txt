@@ -1,0 +1,118 @@
+Create a new Python ML service for SkyGuard AI.
+
+IMPORTANT:
+Do NOT implement the actual anomaly-detection algorithms yet.
+I will provide the ML methodology separately.
+
+Create:
+
+ml-service/
+    app/
+        __init__.py
+        main.py
+        config.py
+        data_client.py
+        models.py
+    requirements.txt
+    README.md
+
+PURPOSE
+
+The ML service will consume sensor readings from the existing SkyGuard API:
+
+GET /api/ml/readings?limit=N
+
+Each reading has exactly:
+
+{
+    "timestamp": "...",
+    "temperature": number,
+    "humidity": number,
+    "pressure": number
+}
+
+REQUIREMENTS
+
+1. Use Python 3.
+
+2. Use FastAPI.
+
+3. Create a health endpoint:
+
+GET /health
+
+Response:
+
+{
+    "status": "ok"
+}
+
+4. Create an endpoint:
+
+GET /ml/status
+
+Return:
+- service status
+- number of readings currently loaded
+- timestamp of latest reading
+- whether the baseline has been initialized
+
+5. Implement data_client.py.
+
+It must:
+- fetch readings from the existing /api/ml/readings endpoint
+- accept a configurable base API URL from an environment variable
+- validate the returned four-field structure
+- convert timestamps to a consistent datetime representation
+- return readings in chronological order
+
+6. Implement a typed internal data model for:
+
+timestamp
+temperature
+humidity
+pressure
+
+7. Create placeholder functions/classes for:
+
+- feature engineering
+- statistical detector
+- ML detector
+- score fusion
+- fault classification
+- sensor health
+
+These should contain clear TODO markers and return placeholder values only.
+
+DO NOT pretend these placeholders are working ML.
+
+8. Add configuration through environment variables.
+
+At minimum:
+
+SKYGUARD_API_URL
+
+9. Add logging for:
+- startup
+- API connection failures
+- invalid sensor data
+- successful data fetches
+
+10. Keep this service completely independent of the existing frontend.
+
+11. Do not modify:
+- the existing frontend
+- the existing simulator
+- the existing database schema
+- existing REST endpoints
+- existing WebSocket behavior
+
+12. Add a README explaining:
+- how to install dependencies
+- how to run the service
+- how it communicates with the existing SkyGuard backend
+- where the ML implementation will be added
+
+The service must run independently with:
+
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8001
