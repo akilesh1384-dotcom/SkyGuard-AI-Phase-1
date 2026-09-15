@@ -18,6 +18,15 @@ class Settings:
     anomaly_threshold: float = 0.75
     statistical_weight: float = 0.45
     ml_weight: float = 0.55
+    diagnostic_frozen_consecutive: int = int(
+        os.getenv("SKYGUARD_DIAGNOSTIC_FROZEN_CONSECUTIVE", "3")
+    )
+    diagnostic_frozen_tolerance: float = float(
+        os.getenv("SKYGUARD_DIAGNOSTIC_FROZEN_TOLERANCE", "0.001")
+    )
+    diagnostic_expected_interval_seconds: float = float(
+        os.getenv("SKYGUARD_DIAGNOSTIC_EXPECTED_INTERVAL_SECONDS", "1")
+    )
 
     @property
     def readings_url(self) -> str:

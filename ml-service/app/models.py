@@ -119,6 +119,16 @@ class DetectorResult:
     reasons: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class DiagnosticResult:
+    timestamp: datetime
+    diagnostic_score: float
+    diagnostic_anomaly: bool
+    fault_type: str | None
+    affected_variable: str | None
+    reasons: tuple[str, ...] = ()
+
+
 class MlServiceStatus(BaseModel):
     status: str
     readings_loaded: int = Field(ge=0)
@@ -130,10 +140,23 @@ class MlServiceStatus(BaseModel):
 
 class AnomalyResult(BaseModel):
     timestamp: datetime
+
+    # Raw detector outputs
     statistical_score: float = Field(ge=0, le=1)
     ml_score: float = Field(ge=0, le=1)
+    diagnostic_score: float = Field(ge=0, le=1)
     final_score: float = Field(ge=0, le=1)
+
+    # Raw model decision
     is_anomaly: bool
+
+    # Operational alert state
+    alert_active: bool = False
+    alert_state: str = "NORMAL"
+
+    diagnostic_anomaly: bool
+    fault_type: str
+    affected_variable: str | None = None
     reasons: list[str]
 
 
@@ -155,6 +178,15 @@ class EvaluationMetrics(BaseModel):
     f1_score: float | None = Field(default=None, ge=0, le=1)
 
 
+class EventLatency(BaseModel):
+    fault_type: str
+    affected_variable: str
+    start_timestamp: datetime
+    end_timestamp: datetime | None
+    detection_latency_seconds: float | None = Field(default=None, ge=0)
+    recovery_latency_seconds: float | None = Field(default=None, ge=0)
+
+
 class EvaluationResponse(BaseModel):
     status: str
     message: str | None = None
@@ -166,3 +198,4 @@ class EvaluationResponse(BaseModel):
     labeled_readings: int = Field(ge=0)
     metrics: EvaluationMetrics | None = None
     by_fault_type: dict[str, EvaluationMetrics] = Field(default_factory=dict)
+    event_latencies: list[EventLatency] = Field(default_factory=list)

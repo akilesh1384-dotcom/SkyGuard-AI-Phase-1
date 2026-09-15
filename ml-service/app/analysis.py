@@ -7,11 +7,20 @@ from collections.abc import Sequence
 from .baseline import Baseline, BaselineManager
 from .config import Settings
 from .data_client import SkyGuardDataClient, reading_is_faulty
-from .ml_placeholders import FeatureEngineer, MlDetector, ScoreFusion, StatisticalDetector
+from .ml_placeholders import (
+    FeatureEngineer,
+    MlDetector,
+    ScoreFusion,
+    StatisticalDetector,
+    SensorDiagnosticDetector,
+)
+from .alert_state import AlertStateManager
 from .models import (
     AnalyzeResponse,
     AnomalyResult,
+    DiagnosticResult,
     EngineeredFeatures,
+    EventLatency,
     EvaluationMetrics,
     EvaluationResponse,
     GroundTruthEvent,
@@ -71,6 +80,67 @@ def calculate_metrics(
     )
 
 
+def calculate_event_latencies(
+    events: Sequence[GroundTruthEvent],
+    results: Sequence[AnomalyResult],
+) -> list[EventLatency]:
+    """Measure first detection and first post-event normal return per event."""
+
+    ordered_results = sorted(results, key=lambda result: result.timestamp)
+    latencies: list[EventLatency] = []
+    for event in sorted(events, key=lambda item: item.start_timestamp):
+        in_event = [
+            result
+            for result in ordered_results
+            if result.timestamp >= event.start_timestamp
+            and (
+                event.end_timestamp is None
+                or result.timestamp <= event.end_timestamp
+            )
+        ]
+        first_detection = next(
+            (result for result in in_event if result.is_anomaly),
+            None,
+        )
+        detection_latency = (
+            (
+                first_detection.timestamp - event.start_timestamp
+            ).total_seconds()
+            if first_detection
+            else None
+        )
+
+        first_normal_after_event = None
+        if event.end_timestamp is not None:
+            first_normal_after_event = next(
+                (
+                    result
+                    for result in ordered_results
+                    if result.timestamp > event.end_timestamp
+                    and not result.is_anomaly
+                ),
+                None,
+            )
+        recovery_latency = (
+            (
+                first_normal_after_event.timestamp - event.end_timestamp
+            ).total_seconds()
+            if first_normal_after_event and event.end_timestamp
+            else None
+        )
+        latencies.append(
+            EventLatency(
+                fault_type=event.fault_type,
+                affected_variable=event.affected_variable,
+                start_timestamp=event.start_timestamp,
+                end_timestamp=event.end_timestamp,
+                detection_latency_seconds=detection_latency,
+                recovery_latency_seconds=recovery_latency,
+            )
+        )
+    return latencies
+
+
 class AnalysisEngine:
     """Own the Layer 1 cache, baseline, detectors, and evaluation flow."""
 
@@ -104,6 +174,44 @@ class AnalysisEngine:
             logger.exception("Unable to refresh Layer 1 analysis data")
             return False
 
+    def _run_detectors(self) -> list[AnomalyResult]:
+        features = self._engineered_features()
+        baseline_features = self._baseline_features(features)
+
+        ml_detector = MlDetector(
+            threshold=self.settings.anomaly_threshold,
+        )
+        ml_detector.fit(baseline_features)
+
+        statistical_results = StatisticalDetector(
+            threshold=self.settings.anomaly_threshold,
+        ).detect(features)
+
+        ml_results = ml_detector.detect(features)
+
+        diagnostic_results = SensorDiagnosticDetector(
+            frozen_consecutive=self.settings.diagnostic_frozen_consecutive,
+            frozen_tolerance=self.settings.diagnostic_frozen_tolerance,
+            expected_interval_seconds=(
+                self.settings.diagnostic_expected_interval_seconds
+            ),
+            threshold=self.settings.anomaly_threshold,
+        ).detect(features)
+
+        fused_results = ScoreFusion(
+            statistical_weight=self.settings.statistical_weight,
+            ml_weight=self.settings.ml_weight,
+            threshold=self.settings.anomaly_threshold,
+        ).fuse(
+            statistical_results,
+            ml_results,
+            diagnostic_results,
+        )
+
+        return AlertStateManager(
+            clear_after_normals=3,
+        ).apply(fused_results)
+        
     def status(self) -> MlServiceStatus:
         if self.last_error and not self.readings:
             status = "degraded"
@@ -129,13 +237,25 @@ class AnalysisEngine:
         return self.status()
 
     async def analyze(self, limit: int = 200) -> AnalyzeResponse:
-        if not await self.refresh(limit):
-            raise RuntimeError(self.last_error or "Unable to load analysis data")
+        # Always refresh the full dataset so baseline construction and
+        # detector training have access to the complete known-normal history.
+        if not await self.refresh():
+            raise RuntimeError(
+                self.last_error or "Unable to load analysis data"
+            )
 
         if not self.baseline.initialized:
             return self._cold_start_response()
 
-        results = self._run_detectors()
+        # Run the detectors on the full chronological dataset.
+        all_results = self._run_detectors()
+
+        # `limit` controls only how many results are returned to the caller.
+        if limit < 1:
+            limit = 1
+
+        results = all_results[-limit:]
+
         return AnalyzeResponse(
             status="ready",
             baseline_progress=self.baseline.progress,
@@ -203,6 +323,7 @@ class AnalysisEngine:
             for reading in scored_readings
         ]
         metrics = calculate_metrics(truth, predictions)
+        event_latencies = calculate_event_latencies(self.events, results)
         by_fault_type = {}
         for fault_type in sorted({event.fault_type for event in self.events}):
             type_truth = [
@@ -225,6 +346,7 @@ class AnalysisEngine:
             labeled_readings=len(scored_readings),
             metrics=metrics,
             by_fault_type=by_fault_type,
+            event_latencies=event_latencies,
         )
 
     def _cold_start_response(self) -> AnalyzeResponse:
@@ -245,31 +367,22 @@ class AnalysisEngine:
 
     def _baseline_features(
         self,
-        features: Sequence[EngineeredFeatures],
+        _features: Sequence[EngineeredFeatures],
     ) -> list[EngineeredFeatures]:
-        baseline_timestamps = {
-            reading.timestamp for reading in self.baseline.readings
-        }
+        """
+        Build model-training features from the known-normal baseline itself.
+
+        This prevents fault-containing historical observations from contaminating
+        the causal window used to train the Isolation Forest.
+        """
+        baseline_features = self.feature_engineer.transform(
+            self.baseline.readings
+        )
+
         return [
             feature
-            for feature in features
-            if feature.timestamp in baseline_timestamps
-            and feature.valid_for_scoring
-            and not feature.history_contains_fault
+            for feature in baseline_features
+            if feature.valid_for_scoring
         ]
 
-    def _run_detectors(self) -> list[AnomalyResult]:
-        features = self._engineered_features()
-        baseline_features = self._baseline_features(features)
-        ml_detector = MlDetector(self.settings.anomaly_threshold)
-        ml_detector.fit(baseline_features)
-
-        statistical_results = StatisticalDetector(
-            self.settings.anomaly_threshold
-        ).detect(features)
-        ml_results = ml_detector.detect(features)
-        return ScoreFusion(
-            statistical_weight=self.settings.statistical_weight,
-            ml_weight=self.settings.ml_weight,
-            threshold=self.settings.anomaly_threshold,
-        ).fuse(statistical_results, ml_results)
+        

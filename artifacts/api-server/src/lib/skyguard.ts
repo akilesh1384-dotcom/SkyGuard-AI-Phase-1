@@ -135,6 +135,7 @@ export class SkyguardSimulator {
   private driftStep = 0;
   private missingTick = 0;
   private activeEventId: number | null = null;
+  private activeEventLastTimestamp: Date | null = null;
   private readonly clients = new Set<WebSocket>();
 
   addClient(client: WebSocket) {
@@ -240,19 +241,7 @@ export class SkyguardSimulator {
     this.frozenReading = null;
     this.driftStep = 0;
     this.missingTick = 0;
-
-    if (isFaultMode(mode)) {
-      const metadata = modeMetadata[mode];
-      const [event] = await db
-        .insert(simulatorEventsTable)
-        .values({
-          faultType: metadata.faultType,
-          affectedVariable: metadata.affectedVariable,
-          startTimestamp: new Date(),
-        })
-        .returning({ id: simulatorEventsTable.id });
-      this.activeEventId = event?.id ?? null;
-    }
+    this.activeEventLastTimestamp = null;
 
     const status = await this.getStatus();
     this.broadcast({ type: "status", status });
@@ -265,6 +254,7 @@ export class SkyguardSimulator {
       const nextReading = this.generateReading(timestamp);
 
       if (!nextReading) {
+        await this.markActiveFaultTimestamp(timestamp);
         this.missingTick += 1;
         if (this.missingTick % 3 === 0) {
           this.broadcast({
@@ -301,6 +291,7 @@ export class SkyguardSimulator {
     }
 
     this.lastGenerated = reading;
+    await this.markActiveFaultTimestamp(reading.timestamp);
     return stored;
   }
 
@@ -394,9 +385,33 @@ export class SkyguardSimulator {
 
     await db
       .update(simulatorEventsTable)
-      .set({ endTimestamp: new Date() })
+      .set({
+        endTimestamp: this.activeEventLastTimestamp ?? new Date(),
+      })
       .where(eq(simulatorEventsTable.id, this.activeEventId));
     this.activeEventId = null;
+    this.activeEventLastTimestamp = null;
+  }
+
+  private async markActiveFaultTimestamp(timestamp: Date) {
+    if (!isFaultMode(this.mode)) {
+      return;
+    }
+
+    if (this.activeEventId === null) {
+      const metadata = modeMetadata[this.mode];
+      const [event] = await db
+        .insert(simulatorEventsTable)
+        .values({
+          faultType: metadata.faultType,
+          affectedVariable: metadata.affectedVariable,
+          startTimestamp: timestamp,
+        })
+        .returning({ id: simulatorEventsTable.id });
+      this.activeEventId = event?.id ?? null;
+    }
+
+    this.activeEventLastTimestamp = timestamp;
   }
 
   private async sendStatus(client: WebSocket) {

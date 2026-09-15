@@ -1,0 +1,163 @@
+We have completed Layer 1 validation.
+
+DO NOT implement SHAP, sensor health, Edge AI, or UI changes yet.
+
+We found two issues that need to be addressed before continuing.
+
+ISSUE 1 — GROUND-TRUTH TIMESTAMP ALIGNMENT
+
+The TEMPERATURE_SPIKE test produced a reading at:
+
+02:19:04
+
+while the simulator ground-truth event began at:
+
+02:19:04.412
+
+The reading was classified as anomalous but evaluation treated it as occurring before the event.
+
+Fix the simulator ground-truth semantics so that:
+
+event_start_timestamp = timestamp of the first sensor reading actually generated under the fault.
+
+event_end_timestamp = timestamp of the last sensor reading generated under the fault.
+
+Do not use the simulator mode-switch wall-clock time if it does not correspond to an actual fault reading.
+
+Preserve the existing event type and affected-variable fields.
+
+Add or update tests for this timestamp alignment.
+
+ISSUE 2 — FROZEN SENSOR DETECTION
+
+Layer 1 missed all FROZEN_SENSOR readings.
+
+Do NOT try to solve this only by lowering the Isolation Forest threshold.
+
+Add a new explicit SensorDiagnosticDetector.
+
+It must detect sequence-based sensor faults that pointwise anomaly detection can miss.
+
+Implement at minimum:
+
+1. FROZEN_SENSOR
+
+Detect a sensor whose value remains effectively unchanged for a configurable number of consecutive readings.
+
+Use a small floating-point tolerance rather than exact equality.
+
+Make the threshold configurable.
+
+2. MISSING_DATA
+
+Detect missing readings / gaps in the expected sampling sequence.
+
+3. ABRUPT_CHANGE
+
+Detect a sudden step change using the existing temporal features.
+
+4. GRADUAL_DRIFT
+
+Add a simple causal trend detector using recent readings.
+
+Do not use future observations.
+
+Return for each reading:
+
+{
+    "timestamp": ...,
+    "diagnostic_score": 0.0-1.0,
+    "diagnostic_anomaly": true/false,
+    "fault_type": "...",
+    "affected_variable": "...",
+    "reasons": [...]
+}
+
+For FROZEN_SENSOR specifically, include a reason such as:
+
+"temperature unchanged for N consecutive readings"
+
+or equivalent based on actual evidence.
+
+SCORE FUSION
+
+Update ScoreFusion so the sensor diagnostic signal is incorporated.
+
+Do not arbitrarily invent a large weighting.
+
+Use an explicit prototype formula:
+
+context_score =
+    0.45 * statistical_score +
+    0.55 * ml_score
+
+final_score = max(context_score, diagnostic_score)
+
+This ensures a deterministic sensor-fault detector can identify failures that an unsupervised ML model cannot reliably detect.
+
+Keep all scores in [0,1].
+
+The final anomaly threshold remains:
+
+final_score >= 0.75
+
+FAULT CLASSIFICATION
+
+Do not create a general ML classifier yet.
+
+For diagnostic detections, use the diagnostic detector's identified fault type.
+
+For context-only anomalies, keep the fault type as:
+
+"UNCLASSIFIED_ANOMALY"
+
+Do not fabricate a specific cause.
+
+EVALUATION
+
+Preserve the existing precision/recall/F1 evaluation.
+
+Also add:
+
+- detection_latency_seconds
+- recovery_latency_seconds
+
+For a ground-truth event:
+
+detection latency =
+timestamp of first correct anomaly detection
+minus
+event_start_timestamp
+
+Recovery latency =
+timestamp when the detector returns to normal after the event
+minus
+event_end_timestamp
+
+Do not count expected post-event persistence as a false positive without also reporting recovery latency.
+
+However, preserve the original strict precision/recall metrics as well, so both views are available.
+
+TESTS
+
+Add tests specifically for:
+
+- frozen temperature
+- frozen humidity
+- frozen pressure
+- all-three-variable frozen sensor
+- missing reading
+- abrupt change
+- gradual drift
+- ground-truth timestamp alignment
+- fusion when the diagnostic detector fires
+- fusion when only the ML detector fires
+
+Do not modify the existing frontend.
+
+Report:
+- files changed
+- new detector logic
+- thresholds
+- updated evaluation results
+- test results
