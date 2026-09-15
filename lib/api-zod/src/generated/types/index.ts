@@ -9,6 +9,7 @@
 export * from './errorResponse';
 export * from './getMlReadingsParams';
 export * from './getReadingHistoryParams';
+export * from './groundTruthEvent';
 export * from './healthStatus';
 export * from './mlReading';
 export * from './sensorReading';

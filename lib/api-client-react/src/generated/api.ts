@@ -23,6 +23,7 @@ import type {
   ErrorResponse,
   GetMlReadingsParams,
   GetReadingHistoryParams,
+  GroundTruthEvent,
   HealthStatus,
   MlReading,
   SensorReading,
@@ -368,6 +369,83 @@ export function useGetMlReadings<TData = Awaited<ReturnType<typeof getMlReadings
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getGetMlReadingsQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getGetMlGroundTruthUrl = () => {
+
+
+
+
+  return `/api/ml/ground-truth`
+}
+
+/**
+ * @summary Get simulator ground-truth fault events
+ */
+export const getMlGroundTruth = async ( options?: Parameters<typeof customFetch>[1]): Promise<GroundTruthEvent[]> => {
+
+  return customFetch<GroundTruthEvent[]>(getGetMlGroundTruthUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetMlGroundTruthQueryKey = () => {
+    return [
+    `/api/ml/ground-truth`
+    ] as const;
+    }
+
+
+export const getGetMlGroundTruthQueryOptions = <TData = Awaited<ReturnType<typeof getMlGroundTruth>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMlGroundTruth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetMlGroundTruthQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getMlGroundTruth>>> = ({ signal }) => getMlGroundTruth({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getMlGroundTruth>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetMlGroundTruthQueryResult = NonNullable<Awaited<ReturnType<typeof getMlGroundTruth>>>
+export type GetMlGroundTruthQueryError = ErrorType<unknown>
+
+
+/**
+ * @summary Get simulator ground-truth fault events
+ */
+
+export function useGetMlGroundTruth<TData = Awaited<ReturnType<typeof getMlGroundTruth>>, TError = ErrorType<unknown>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getMlGroundTruth>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetMlGroundTruthQueryOptions(options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

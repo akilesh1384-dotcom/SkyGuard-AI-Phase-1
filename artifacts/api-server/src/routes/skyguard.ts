@@ -2,6 +2,7 @@ import { asc } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   GetLatestReadingResponse,
+  GetMlGroundTruthResponse,
   GetMlReadingsQueryParams,
   GetMlReadingsResponse,
   GetReadingHistoryQueryParams,
@@ -14,7 +15,11 @@ import {
   ResetSimulatorResponse,
   SimulatorMode,
 } from "@workspace/api-zod";
-import { db, sensorReadingsTable } from "@workspace/db";
+import {
+  db,
+  sensorReadingsTable,
+  simulatorEventsTable,
+} from "@workspace/db";
 import {
   skyguardSimulator,
   type SimulatorModeValue,
@@ -50,6 +55,20 @@ router.get("/ml/readings", async (req, res): Promise<void> => {
       : await baseQuery.limit(query.data.limit);
 
   res.json(GetMlReadingsResponse.parse(readings));
+});
+
+router.get("/ml/ground-truth", async (_req, res): Promise<void> => {
+  const events = await db
+    .select({
+      fault_type: simulatorEventsTable.faultType,
+      affected_variable: simulatorEventsTable.affectedVariable,
+      start_timestamp: simulatorEventsTable.startTimestamp,
+      end_timestamp: simulatorEventsTable.endTimestamp,
+    })
+    .from(simulatorEventsTable)
+    .orderBy(asc(simulatorEventsTable.startTimestamp));
+
+  res.json(GetMlGroundTruthResponse.parse(events));
 });
 
 router.get("/history", async (req, res): Promise<void> => {

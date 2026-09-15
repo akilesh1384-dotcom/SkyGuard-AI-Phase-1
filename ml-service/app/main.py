@@ -1,11 +1,12 @@
 import logging
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Query
 
+from .analysis import AnalysisEngine
 from .config import settings
 from .data_client import SkyGuardDataClient
-from .models import MlServiceStatus, SensorReading
+from .models import AnalyzeResponse, EvaluationResponse, MlServiceStatus
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,39 +15,14 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class ReadingState:
-    def __init__(self, client: SkyGuardDataClient):
-        self.client = client
-        self.readings: list[SensorReading] = []
-        self.last_error: str | None = None
-
-    async def refresh(self) -> None:
-        try:
-            self.readings = await self.client.fetch_readings()
-            self.last_error = None
-        except Exception as error:
-            self.last_error = str(error)
-            logger.warning("Keeping the last valid reading cache after fetch failure")
-
-    def status(self) -> MlServiceStatus:
-        latest = self.readings[-1].timestamp if self.readings else None
-        return MlServiceStatus(
-            status="degraded" if self.last_error else "ready",
-            readings_loaded=len(self.readings),
-            latest_reading_timestamp=latest,
-            # TODO: Set true only after the approved baseline methodology runs.
-            baseline_initialized=False,
-        )
-
-
 client = SkyGuardDataClient(settings)
-reading_state = ReadingState(client)
+analysis_engine = AnalysisEngine(client, settings)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     logger.info("Starting SkyGuard ML service")
-    await reading_state.refresh()
+    await analysis_engine.refresh()
     yield
     logger.info("Stopping SkyGuard ML service")
 
@@ -66,5 +42,22 @@ async def health() -> dict[str, str]:
 
 @app.get("/ml/status", response_model=MlServiceStatus)
 async def ml_status() -> MlServiceStatus:
-    await reading_state.refresh()
-    return reading_state.status()
+    return await analysis_engine.get_status()
+
+
+@app.get("/ml/analyze", response_model=AnalyzeResponse)
+async def ml_analyze(
+    limit: int = Query(default=200, ge=1, le=10000),
+) -> AnalyzeResponse:
+    try:
+        return await analysis_engine.analyze(limit)
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error
+
+
+@app.get("/ml/evaluation", response_model=EvaluationResponse)
+async def ml_evaluation() -> EvaluationResponse:
+    try:
+        return await analysis_engine.evaluate()
+    except RuntimeError as error:
+        raise HTTPException(status_code=503, detail=str(error)) from error

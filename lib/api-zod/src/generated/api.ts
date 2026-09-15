@@ -72,6 +72,18 @@ export const GetMlReadingsResponse = zod.array(GetMlReadingsResponseItem)
 
 
 /**
+ * @summary Get simulator ground-truth fault events
+ */
+export const GetMlGroundTruthResponseItem = zod.object({
+  "fault_type": zod.string(),
+  "affected_variable": zod.string(),
+  "start_timestamp": zod.coerce.date(),
+  "end_timestamp": zod.coerce.date().nullable()
+})
+export const GetMlGroundTruthResponse = zod.array(GetMlGroundTruthResponseItem)
+
+
+/**
  * @summary Get simulator and connection status
  */
 export const getSimulatorStatusResponseConnectedClientsMin = 0;

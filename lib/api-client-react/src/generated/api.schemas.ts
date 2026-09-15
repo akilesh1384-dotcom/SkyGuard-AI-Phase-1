@@ -24,6 +24,14 @@ export interface MlReading {
   pressure: number;
 }
 
+export interface GroundTruthEvent {
+  fault_type: string;
+  affected_variable: string;
+  start_timestamp: string;
+  /** @nullable */
+  end_timestamp: string | null;
+}
+
 export type SimulatorMode = typeof SimulatorMode[keyof typeof SimulatorMode];
 
 

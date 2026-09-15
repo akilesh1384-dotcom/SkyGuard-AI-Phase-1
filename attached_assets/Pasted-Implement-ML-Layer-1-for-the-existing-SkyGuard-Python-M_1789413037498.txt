@@ -1,0 +1,343 @@
+Implement ML Layer 1 for the existing SkyGuard Python ML service.
+
+IMPORTANT:
+Do not modify the existing SkyGuard frontend.
+Do not rewrite the TypeScript/Express backend.
+Do not modify existing simulator behavior.
+Do not add SHAP, sensor-health prediction, Edge AI, or deep learning yet.
+
+Use the existing files and interfaces.
+
+OBJECTIVE
+
+Implement:
+
+1. Feature engineering
+2. Baseline initialization
+3. Statistical anomaly detection
+4. Isolation Forest anomaly detection
+5. Normalized score fusion
+6. Basic anomaly result generation
+
+ML inputs remain ONLY:
+
+- temperature
+- humidity
+- pressure
+
+--------------------------------------------------
+1. BASELINE
+--------------------------------------------------
+
+Create a baseline mechanism using the first 60 valid normal readings.
+
+The baseline must not include known injected fault periods.
+
+Because the current simulator has ground-truth events, add support for retrieving ground-truth events from the SkyGuard API.
+
+Add to the existing TypeScript API:
+
+GET /api/ml/ground-truth
+
+It should return simulator fault events with:
+
+- fault_type
+- affected_variable
+- start_timestamp
+- end_timestamp
+
+Do not change existing endpoints.
+
+The Python service should be able to fetch this endpoint.
+
+For the first implementation, readings falling inside known ground-truth fault intervals must not be used for baseline fitting.
+
+Until 60 valid normal readings are available:
+
+baseline_initialized = false
+
+and the system should report:
+
+status = "collecting_baseline"
+
+After 60 valid normal readings:
+
+baseline_initialized = true
+
+--------------------------------------------------
+2. FEATURE ENGINEERING
+--------------------------------------------------
+
+Implement FeatureEngineer.
+
+For each reading calculate:
+
+RAW:
+- temperature
+- humidity
+- pressure
+
+TEMPORAL:
+- temperature_delta
+- humidity_delta
+- pressure_delta
+
+ROLLING:
+- temperature_rolling_mean
+- temperature_rolling_std
+- humidity_rolling_mean
+- humidity_rolling_std
+- pressure_rolling_mean
+- pressure_rolling_std
+
+MULTIVARIATE:
+- normalized temperature deviation
+- normalized humidity deviation
+- normalized pressure deviation
+- pairwise normalized relationships between the variables
+
+IMPORTANT:
+
+All features must be causal.
+
+Never use future readings when calculating features for the current reading.
+
+The first readings that do not have enough history should have null/NaN feature values and should not be scored until enough history exists.
+
+Use a clearly defined rolling window.
+
+Use a window of 20 readings for the prototype.
+
+--------------------------------------------------
+3. STATISTICAL DETECTOR
+--------------------------------------------------
+
+Implement StatisticalDetector.
+
+Use robust deviation from the rolling baseline.
+
+Calculate a normalized statistical anomaly score in [0,1].
+
+The detector should be sensitive to:
+
+- spikes
+- sudden drops
+- unusual variability
+- persistent drift
+
+Do not use hard-coded "temperature above X = anomaly" rules as the primary method.
+
+Return, per reading:
+
+{
+    "timestamp": ...,
+    "score": 0.0-1.0,
+    "is_anomaly": true/false,
+    "reasons": [...]
+}
+
+Use a documented threshold.
+
+Start with:
+
+score >= 0.75 → anomaly
+
+Treat this threshold as a prototype parameter that can later be tuned using validation.
+
+--------------------------------------------------
+4. ISOLATION FOREST
+--------------------------------------------------
+
+Implement MlDetector using scikit-learn IsolationForest.
+
+Use the engineered features only.
+
+Do not train on known fault intervals.
+
+For the prototype:
+
+- n_estimators = 100
+- random_state = 42
+- contamination = "auto"
+
+Fit the model using known-normal baseline data.
+
+Convert the Isolation Forest decision output into a normalized anomaly score in [0,1].
+
+DO NOT call this output a probability.
+
+Use:
+
+- anomaly_score
+- is_anomaly
+
+with a clearly documented normalization method.
+
+Start with anomaly score >= 0.75 as the prototype threshold.
+
+--------------------------------------------------
+5. SCORE FUSION
+--------------------------------------------------
+
+Implement ScoreFusion.
+
+Do not directly average incompatible raw detector scores.
+
+Both detectors already return normalized [0,1] scores.
+
+Calculate:
+
+final_score =
+    0.45 * statistical_score +
+    0.55 * ml_score
+
+These weights are prototype engineering parameters.
+
+Document them clearly.
+
+The final anomaly threshold is:
+
+final_score >= 0.75
+
+Return:
+
+{
+    "timestamp": ...,
+    "statistical_score": ...,
+    "ml_score": ...,
+    "final_score": ...,
+    "is_anomaly": ...
+}
+
+--------------------------------------------------
+6. RESULT MODEL
+--------------------------------------------------
+
+Extend the existing models with an anomaly result model:
+
+timestamp
+statistical_score
+ml_score
+final_score
+is_anomaly
+reasons
+
+Do not invent confidence yet.
+
+We will implement calibrated/confidence-style reporting later.
+
+--------------------------------------------------
+7. ENDPOINTS
+--------------------------------------------------
+
+Add:
+
+GET /ml/analyze?limit=200
+
+This should:
+
+1. Fetch readings.
+2. Fetch ground-truth events.
+3. Build or load baseline.
+4. Generate features.
+5. Run statistical detector.
+6. Run Isolation Forest.
+7. Fuse scores.
+8. Return chronological anomaly results.
+
+Also add:
+
+GET /ml/evaluation
+
+For all available readings with ground truth, calculate:
+
+- true positives
+- false positives
+- true negatives
+- false negatives
+- precision
+- recall
+- F1 score
+
+Do not fabricate any metrics.
+
+If insufficient labeled data exists, explicitly report that.
+
+Also report metrics separately by fault type when enough data exists.
+
+--------------------------------------------------
+8. COLD START
+--------------------------------------------------
+
+Before baseline initialization:
+
+No final anomaly decisions.
+
+Return:
+
+{
+    "status": "collecting_baseline",
+    "baseline_progress": X
+}
+
+where X is the number of valid normal readings collected.
+
+--------------------------------------------------
+9. PERFORMANCE / DATA SAFETY
+--------------------------------------------------
+
+Do not silently use future observations.
+
+Do not leak fault-period data into baseline/model training.
+
+Do not overwrite sensor observations.
+
+Do not claim model confidence is calibrated.
+
+Do not claim detection accuracy until /ml/evaluation produces actual measured results.
+
+--------------------------------------------------
+10. TESTS
+--------------------------------------------------
+
+Add tests for:
+
+- feature calculation
+- no future leakage
+- baseline initialization
+- statistical detector
+- Isolation Forest output range
+- score fusion
+- ground-truth exclusion
+- evaluation metrics
+
+--------------------------------------------------
+11. IMPLEMENTATION PRIORITY
+--------------------------------------------------
+
+Complete this in order:
+
+1. Ground-truth API
+2. Data client support
+3. FeatureEngineer
+4. Baseline handling
+5. StatisticalDetector
+6. MlDetector
+7. ScoreFusion
+8. /ml/analyze
+9. /ml/evaluation
+10. Tests
+
+Do not implement later-stage features yet.
+
+When finished, report:
+
+- files modified
+- files added
+- how the baseline works
+- exact feature list
+- exact score-fusion formula
+- how fault leakage is prevented
+- how to run the tests
+- example /ml/analyze response
+- example /ml/evaluation response

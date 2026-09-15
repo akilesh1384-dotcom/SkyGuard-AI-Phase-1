@@ -86,6 +86,20 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MlReading"
+  /ml/ground-truth:
+    get:
+      operationId: getMlGroundTruth
+      tags: [monitoring]
+      summary: Get simulator ground-truth fault events
+      responses:
+        "200":
+          description: Simulator fault events ordered by start timestamp
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/GroundTruthEvent"
   /status:
     get:
       operationId: getSimulatorStatus
@@ -204,6 +218,24 @@ components:
         - temperature
         - humidity
         - pressure
+    GroundTruthEvent:
+      type: object
+      properties:
+        fault_type:
+          type: string
+        affected_variable:
+          type: string
+        start_timestamp:
+          type: string
+          format: date-time
+        end_timestamp:
+          type: ["string", "null"]
+          format: date-time
+      required:
+        - fault_type
+        - affected_variable
+        - start_timestamp
+        - end_timestamp
     SimulatorMode:
       type: string
       enum:
