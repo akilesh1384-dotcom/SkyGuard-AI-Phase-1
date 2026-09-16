@@ -103,6 +103,17 @@ router.get("/status", async (_req, res): Promise<void> => {
   res.json(GetSimulatorStatusResponse.parse(await skyguardSimulator.getStatus()));
 });
 
+router.post("/physical/reading", async (req, res): Promise<void> => {
+  try {
+    const reading = await skyguardSimulator.ingestPhysicalReading(req.body);
+    res.status(201).json(GetReadingHistoryResponseItem.parse(reading));
+  } catch (error) {
+    res.status(400).json({
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
 router.post("/simulator/start", async (_req, res): Promise<void> => {
   res.json(StartSimulatorResponse.parse(await skyguardSimulator.start()));
 });
