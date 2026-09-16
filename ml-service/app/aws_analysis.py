@@ -3,10 +3,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 import numpy as np
+import shap
 from sklearn.ensemble import IsolationForest
 
 from .alert_state import AlertStateManager
-from .models import AnomalyResult, DiagnosticResult, DetectorResult, GroundTruthEvent, SensorReading
+from .models import AnomalyResult, GroundTruthEvent, SensorReading, ShapContribution
 
 
 class AwsAnalysisEngine:
@@ -20,6 +21,8 @@ class AwsAnalysisEngine:
     Live analysis only scans a recent window so historical data does not have
     to be reprocessed on every dashboard refresh.
     """
+
+    FEATURE_NAMES = ("temperature", "humidity")
 
     def __init__(self, settings):
         self.settings = settings
@@ -62,6 +65,16 @@ class AwsAnalysisEngine:
         if abs(dmax - dmin) < 1e-9:
             dmax = dmin + 1.0
 
+        explainer = None
+        shap_base_value = None
+        try:
+            explainer = shap.TreeExplainer(model)
+            expected = np.asarray(explainer.expected_value).reshape(-1)
+            if expected.size:
+                shap_base_value = float(expected[0])
+        except Exception:
+            explainer = None
+
         recent_count = max(window + 3, window + limit + 3, 80)
         analysis_readings = self.readings[-recent_count:]
         start_offset = len(self.readings) - len(analysis_readings)
@@ -87,8 +100,10 @@ class AwsAnalysisEngine:
             hchange = abs(reading.humidity - prev.humidity) / max(3 * float(np.std(hums, ddof=1)), 1e-6)
             stat_score = float(np.clip(0.75 * deviation + 0.25 * min(max(tchange, hchange), 1.0), 0, 1))
 
-            decision = float(model.decision_function(np.asarray([[reading.temperature, reading.humidity]], dtype=float))[0])
+            row = np.asarray([[reading.temperature, reading.humidity]], dtype=float)
+            decision = float(model.decision_function(row)[0])
             ml_score = float(np.clip((dmax - decision) / (dmax - dmin), 0, 1))
+            shap_contributions = self._shap_contributions(explainer, row)
 
             diagnostic_score = 0.0
             fault_type = None
@@ -127,9 +142,35 @@ class AwsAnalysisEngine:
                 fault_type=fault_type,
                 affected_variable=affected,
                 reasons=list(dict.fromkeys(reasons + (["isolation_forest"] if ml_score >= self.settings.anomaly_threshold else []))),
+                shap_base_value=shap_base_value,
+                shap_contributions=shap_contributions,
             ))
 
         return AlertStateManager(clear_after_normals=3).apply(output)
+
+    def _shap_contributions(self, explainer, row: np.ndarray) -> list[ShapContribution]:
+        if explainer is None:
+            return []
+        try:
+            values = np.asarray(explainer.shap_values(row))
+            if values.ndim == 3:
+                values = values[0]
+            if values.ndim == 2:
+                values = values[0]
+            values = values.reshape(-1)
+            contributions = [
+                ShapContribution(
+                    feature=name,
+                    value=float(row[0, index]),
+                    shap_value=float(value),
+                    direction="increases_anomaly" if float(value) < 0 else "decreases_anomaly",
+                )
+                for index, (name, value) in enumerate(zip(self.FEATURE_NAMES, values))
+            ]
+            contributions.sort(key=lambda item: abs(item.shap_value), reverse=True)
+            return contributions
+        except Exception:
+            return []
 
     def _in_event(self, reading: SensorReading) -> bool:
         return any(
