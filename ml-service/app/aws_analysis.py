@@ -16,9 +16,9 @@ class AwsAnalysisEngine:
     multivariate pressure features are deliberately disabled; unavailable
     pressure is never imputed or fabricated.
 
-    The baseline is still fitted from the complete known-normal baseline, but
-    live analysis only scans a recent window. This avoids reprocessing every
-    historical reading on each dashboard refresh.
+    The baseline is fitted from the first required known-normal readings.
+    Live analysis only scans a recent window so historical data does not have
+    to be reprocessed on every dashboard refresh.
     """
 
     def __init__(self, settings):
@@ -30,7 +30,13 @@ class AwsAnalysisEngine:
     def refresh(self, readings: Sequence[SensorReading], events: Sequence[GroundTruthEvent]) -> None:
         self.readings = sorted(readings, key=lambda item: item.timestamp)
         self.events = sorted(events, key=lambda item: item.start_timestamp)
-        self.baseline = [r for r in self.readings if not self._in_event(r)][: self.settings.baseline_size]
+        baseline: list[SensorReading] = []
+        for reading in self.readings:
+            if not self._in_event(reading):
+                baseline.append(reading)
+                if len(baseline) >= self.settings.baseline_size:
+                    break
+        self.baseline = baseline
 
     def status(self) -> tuple[bool, int]:
         return len(self.baseline) >= self.settings.baseline_size, min(len(self.baseline), self.settings.baseline_size)
@@ -56,16 +62,11 @@ class AwsAnalysisEngine:
         if abs(dmax - dmin) < 1e-9:
             dmax = dmin + 1.0
 
-        # Keep enough history for the rolling detector and alert hysteresis,
-        # but do not recompute the entire historical dataset every refresh.
         recent_count = max(window + 3, window + limit + 3, 80)
         analysis_readings = self.readings[-recent_count:]
         start_offset = len(self.readings) - len(analysis_readings)
 
         output: list[AnomalyResult] = []
-        diagnostics: list[DiagnosticResult] = []
-        statistical: list[DetectorResult] = []
-        ml_results: list[DetectorResult] = []
 
         for local_index, reading in enumerate(analysis_readings):
             global_index = start_offset + local_index
