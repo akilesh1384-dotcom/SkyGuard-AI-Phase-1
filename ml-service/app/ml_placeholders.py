@@ -557,82 +557,85 @@ class SensorDiagnosticDetector:
                     diagnostic_score = 1.0
                     fault_type = "MISSING_DATA"
                     affected_variable = "all"
-                    reasons.append(f"timestamp gap of {gap:.2f} seconds detected")
+                    reasons.append("timestamp_gap")
+
+            for variable in ("temperature", "humidity", "pressure"):
+                current = getattr(feature, variable)
+                previous_value = (
+                    getattr(features[index - 1], variable)
+                    if index > 0
+                    else None
+                )
+
+                if (
+                    previous_value is not None
+                    and abs(current - previous_value) <= self.frozen_tolerance
+                ):
+                    frozen_counts[variable] += 1
+                else:
+                    frozen_counts[variable] = 0
+
+                if frozen_counts[variable] >= self.frozen_consecutive:
+                    diagnostic_score = max(diagnostic_score, 1.0)
+                    fault_type = fault_type or "FROZEN_SENSOR"
+                    affected_variable = affected_variable or variable
+                    reasons.append(f"{variable}_frozen")
 
             if feature.valid_for_scoring:
-                values = {
-                    "temperature": feature.temperature,
-                    "humidity": feature.humidity,
-                    "pressure": feature.pressure,
+                change_candidates = {
+                    "temperature": abs(feature.temperature_delta or 0.0),
+                    "humidity": abs(feature.humidity_delta or 0.0),
+                    "pressure": abs(feature.pressure_delta or 0.0),
                 }
-                deltas = {
-                    "temperature": feature.temperature_delta,
-                    "humidity": feature.humidity_delta,
-                    "pressure": feature.pressure_delta,
-                }
-                for variable, delta in deltas.items():
-                    if delta is not None and abs(delta) <= self.frozen_tolerance:
-                        frozen_counts[variable] += 1
-                    else:
-                        frozen_counts[variable] = 0
-
-                frozen_variable = next(
-                    (
-                        variable
-                        for variable, count in frozen_counts.items()
-                        if count >= self.frozen_consecutive
-                    ),
-                    None,
+                max_change_variable, max_change = max(
+                    change_candidates.items(),
+                    key=lambda item: item[1],
                 )
-                if frozen_variable:
-                    diagnostic_score = max(diagnostic_score, 1.0)
-                    fault_type = "FROZEN_SENSOR"
-                    affected_variable = frozen_variable
-                    reasons.append(f"{frozen_variable} sensor appears frozen")
+                max_scale = {
+                    "temperature": feature.temperature_rolling_std or 0.0,
+                    "humidity": feature.humidity_rolling_std or 0.0,
+                    "pressure": feature.pressure_rolling_std or 0.0,
+                }[max_change_variable]
+                if max_scale > 1e-9:
+                    change_ratio = max_change / (3.0 * max_scale)
+                    if change_ratio >= self.threshold:
+                        diagnostic_score = max(diagnostic_score, min(change_ratio, 1.0))
+                        reasons.append(f"{max_change_variable}_abrupt_change")
+                        fault_type = fault_type or "ABRUPT_CHANGE"
+                        affected_variable = affected_variable or max_change_variable
 
-                deviations = {
-                    "temperature": abs(feature.temperature_normalized_deviation or 0.0),
-                    "humidity": abs(feature.humidity_normalized_deviation or 0.0),
-                    "pressure": abs(feature.pressure_normalized_deviation or 0.0),
-                }
-                variable, deviation = max(
-                    deviations.items(), key=lambda item: item[1]
-                )
-                if deviation >= 5.0:
-                    diagnostic_score = max(diagnostic_score, min(deviation / 6.0, 1.0))
-                    if fault_type is None:
-                        fault_type = "ABRUPT_CHANGE"
-                        affected_variable = variable
-                    reasons.append(f"{variable} shows an extreme deviation")
+                start = max(0, index - self.drift_window + 1)
+                drift_window = features[start:index + 1]
+                if len(drift_window) >= self.drift_window:
+                    for variable in ("temperature", "humidity", "pressure"):
+                        values = np.asarray(
+                            [getattr(row, variable) for row in drift_window],
+                            dtype=float,
+                        )
+                        slope = abs(float(np.polyfit(np.arange(len(values)), values, 1)[0]))
+                        baseline_scale = {
+                            "temperature": feature.temperature_rolling_std or 0.0,
+                            "humidity": feature.humidity_rolling_std or 0.0,
+                            "pressure": feature.pressure_rolling_std or 0.0,
+                        }[variable]
+                        if baseline_scale > 1e-9 and slope / baseline_scale >= 0.25:
+                            diagnostic_score = max(
+                                diagnostic_score,
+                                min(slope / baseline_scale, 1.0),
+                            )
+                            reasons.append(f"{variable}_gradual_drift")
+                            fault_type = fault_type or "GRADUAL_DRIFT"
+                            affected_variable = affected_variable or variable
 
-                if index + 1 >= self.drift_window:
-                    recent = features[index + 1 - self.drift_window:index + 1]
-                    for drift_variable, attr in (
-                        ("temperature", "temperature"),
-                        ("humidity", "humidity"),
-                        ("pressure", "pressure"),
-                    ):
-                        series = np.asarray([getattr(item, attr) for item in recent], dtype=float)
-                        x = np.arange(len(series), dtype=float)
-                        slope = float(np.polyfit(x, series, 1)[0])
-                        spread = max(float(np.std(series)), 1e-9)
-                        if abs(slope) > spread * 0.15:
-                            drift_score = float(np.clip(abs(slope) / (spread * 0.5), 0.0, 1.0))
-                            if drift_score >= self.threshold:
-                                diagnostic_score = max(diagnostic_score, drift_score)
-                                if fault_type is None:
-                                    fault_type = "GRADUAL_DRIFT"
-                                    affected_variable = drift_variable
-                                reasons.append(f"{drift_variable} shows persistent directional drift")
-
+            diagnostic_is_anomaly = diagnostic_score >= self.threshold
             results.append(
                 DiagnosticResult(
                     timestamp=feature.timestamp,
                     diagnostic_score=float(np.clip(diagnostic_score, 0.0, 1.0)),
-                    diagnostic_anomaly=diagnostic_score >= self.threshold,
+                    diagnostic_anomaly=diagnostic_is_anomaly,
                     fault_type=fault_type,
                     affected_variable=affected_variable,
-                    reasons=tuple(reasons),
+                    reasons=tuple(dict.fromkeys(reasons)),
                 )
             )
 
@@ -659,16 +662,17 @@ class ScoreFusion:
         diagnostic_scores: Sequence[DiagnosticResult] | None = None,
         multivariate_scores: Sequence[DetectorResult] | None = None,
     ) -> list[AnomalyResult]:
-        statistical_map = {item.timestamp: item for item in statistical_scores}
-        ml_map = {item.timestamp: item for item in ml_scores}
+        statistical_map = {result.timestamp: result for result in statistical_scores}
+        ml_map = {result.timestamp: result for result in ml_scores}
         diagnostic_map = {
-            item.timestamp: item
-            for item in (diagnostic_scores or ())
+            result.timestamp: result
+            for result in (diagnostic_scores or ())
         }
         multivariate_map = {
-            item.timestamp: item
-            for item in (multivariate_scores or ())
+            result.timestamp: result
+            for result in (multivariate_scores or ())
         }
+
         timestamps = sorted(
             set(statistical_map)
             | set(ml_map)
@@ -677,6 +681,7 @@ class ScoreFusion:
         )
 
         results: list[AnomalyResult] = []
+
         for timestamp in timestamps:
             statistical = statistical_map.get(
                 timestamp,
@@ -725,6 +730,7 @@ class ScoreFusion:
                     else None
                 )
                 or ("UNCLASSIFIED_ANOMALY" if is_anomaly else None)
+                or "NORMAL"
             )
             affected_variable = diagnostic.affected_variable
             if affected_variable is None and multivariate.is_anomaly:
