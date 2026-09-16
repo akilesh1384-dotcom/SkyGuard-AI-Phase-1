@@ -103,6 +103,13 @@ router.get("/status", async (_req, res): Promise<void> => {
   res.json(GetSimulatorStatusResponse.parse(await skyguardSimulator.getStatus()));
 });
 
+router.get("/physical/device-status", async (_req, res): Promise<void> => {
+  res.json({
+    source: "PHYSICAL_AWS",
+    device: skyguardSimulator.getPhysicalDeviceStatus(),
+  });
+});
+
 router.post("/physical/reading", async (req, res): Promise<void> => {
   try {
     const reading = await skyguardSimulator.ingestPhysicalReading(req.body);
