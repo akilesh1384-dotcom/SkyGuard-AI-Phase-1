@@ -6,14 +6,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SensorReading(BaseModel):
-    """The exact four-field reading contract returned by SkyGuard."""
-
+    """Sensor reading. Pressure is optional for the physical AWS prototype."""
     model_config = ConfigDict(extra="forbid")
-
     timestamp: datetime
     temperature: float
     humidity: float
-    pressure: float
+    pressure: float | None = None
 
     @field_validator("timestamp")
     @classmethod
@@ -24,10 +22,7 @@ class SensorReading(BaseModel):
 
 
 class GroundTruthEvent(BaseModel):
-    """A simulator event used to prevent fault leakage into training."""
-
     model_config = ConfigDict(extra="forbid")
-
     fault_type: str
     affected_variable: str
     start_timestamp: datetime
@@ -44,35 +39,20 @@ class GroundTruthEvent(BaseModel):
 
 
 FEATURE_NAMES = (
-    "temperature",
-    "humidity",
-    "pressure",
-    "temperature_delta",
-    "humidity_delta",
-    "pressure_delta",
-    "temperature_rolling_mean",
-    "temperature_rolling_std",
-    "humidity_rolling_mean",
-    "humidity_rolling_std",
-    "pressure_rolling_mean",
-    "pressure_rolling_std",
-    "temperature_normalized_deviation",
-    "humidity_normalized_deviation",
-    "pressure_normalized_deviation",
-    "temperature_humidity_relationship",
-    "temperature_pressure_relationship",
+    "temperature", "humidity", "pressure", "temperature_delta", "humidity_delta", "pressure_delta",
+    "temperature_rolling_mean", "temperature_rolling_std", "humidity_rolling_mean", "humidity_rolling_std",
+    "pressure_rolling_mean", "pressure_rolling_std", "temperature_normalized_deviation", "humidity_normalized_deviation",
+    "pressure_normalized_deviation", "temperature_humidity_relationship", "temperature_pressure_relationship",
     "humidity_pressure_relationship",
 )
 
 
 @dataclass(frozen=True)
 class EngineeredFeatures:
-    """Causal feature row for one sensor reading."""
-
     timestamp: datetime
     temperature: float
     humidity: float
-    pressure: float
+    pressure: float | None
     temperature_delta: float | None
     humidity_delta: float | None
     pressure_delta: float | None
@@ -93,15 +73,11 @@ class EngineeredFeatures:
     valid_for_scoring: bool
     robust_medians: tuple[float, float, float] | None = None
     robust_scales: tuple[float, float, float] | None = None
-
     feature_names: ClassVar[tuple[str, ...]] = FEATURE_NAMES
 
     def vector(self) -> list[float]:
-        """Return only the engineered numeric inputs used by Isolation Forest."""
-
         if not self.valid_for_scoring:
             raise ValueError("Feature row does not have enough causal history")
-
         values = [getattr(self, name) for name in self.feature_names]
         if any(value is None for value in values):
             raise ValueError("Valid feature row contains an unset feature")
@@ -133,6 +109,7 @@ class MlServiceStatus(BaseModel):
     baseline_initialized: bool
     baseline_progress: int = Field(ge=0)
     baseline_required: int = Field(default=60, ge=1)
+    sensor_mode: str = "FULL"
 
 
 class AnomalyResult(BaseModel):
@@ -156,6 +133,7 @@ class AnalyzeResponse(BaseModel):
     baseline_progress: int = Field(ge=0)
     baseline_required: int = Field(default=60, ge=1)
     baseline_initialized: bool
+    sensor_mode: str = "FULL"
     results: list[AnomalyResult]
 
 
@@ -193,6 +171,7 @@ class EvaluationResponse(BaseModel):
     baseline_progress: int = Field(ge=0)
     baseline_required: int = Field(default=60, ge=1)
     baseline_initialized: bool
+    sensor_mode: str = "FULL"
     total_readings: int = Field(ge=0)
     evaluated_readings: int = Field(ge=0)
     labeled_readings: int = Field(ge=0)
