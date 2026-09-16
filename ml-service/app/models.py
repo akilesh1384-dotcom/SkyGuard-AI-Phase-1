@@ -145,6 +145,7 @@ class AnomalyResult(BaseModel):
     statistical_score: float = Field(ge=0, le=1)
     ml_score: float = Field(ge=0, le=1)
     diagnostic_score: float = Field(ge=0, le=1)
+    multivariate_score: float = Field(ge=0, le=1)
     final_score: float = Field(ge=0, le=1)
 
     # Raw model decision
