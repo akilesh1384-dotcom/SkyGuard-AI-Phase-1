@@ -5,7 +5,8 @@ import { getSensorMode, type SensorMode } from './sensor-mode-control';
 
 type AnomalyResult = { timestamp: string; statistical_score: number; ml_score: number; diagnostic_score: number; multivariate_score: number; final_score: number; is_anomaly: boolean; alert_active: boolean; alert_state: string; diagnostic_anomaly: boolean; fault_type: string; affected_variable: string | null; reasons: string[]; };
 type AnalysisResponse = { status: string; baseline_progress: number; baseline_required: number; baseline_initialized: boolean; sensor_mode: SensorMode; results: AnomalyResult[]; };
-type StatusResponse = { status: string; readings_loaded: number; latest_reading_timestamp: string | null; baseline_initialized: boolean; baseline_progress: number; baseline_required: number; sensor_mode: SensorMode; };
+type MlStatusResponse = { status: string; readings_loaded: number; latest_reading_timestamp: string | null; baseline_initialized: boolean; baseline_progress: number; baseline_required: number; sensor_mode: SensorMode; };
+type SimulatorStatusResponse = { readingsStored: number; };
 function percent(value: number) { return `${Math.round(Math.max(0, Math.min(1, value)) * 100)}%`; }
 function faultLabel(value: string) { return value.toLowerCase().split('_').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' '); }
 function toneForScore(score: number) { if (score >= 0.75) return 'bg-[#ef7168]'; if (score >= 0.5) return 'bg-[#ffbe55]'; return 'bg-[#45d5c1]'; }
@@ -43,19 +44,22 @@ export default function AiAnalysisPanel() {
     let timer: number | undefined;
     const load = async () => {
       try {
-        const [analysisResponse, statusResponse] = await Promise.all([
+        const [analysisResponse, mlStatusResponse, simulatorStatusResponse] = await Promise.all([
           fetch(`/api/ml/analyze?limit=1&sensor_mode=${mode}`, { cache: 'no-store' }),
           fetch(`/api/ml/status?sensor_mode=${mode}`, { cache: 'no-store' }),
+          fetch('/api/status', { cache: 'no-store' }),
         ]);
         if (!analysisResponse.ok) throw new Error(`ML analysis API ${analysisResponse.status}`);
-        if (!statusResponse.ok) throw new Error(`ML status API ${statusResponse.status}`);
-        const [analysisPayload, statusPayload] = await Promise.all([
+        if (!mlStatusResponse.ok) throw new Error(`ML status API ${mlStatusResponse.status}`);
+        if (!simulatorStatusResponse.ok) throw new Error(`Simulator status API ${simulatorStatusResponse.status}`);
+        const [analysisPayload, mlStatusPayload, simulatorStatusPayload] = await Promise.all([
           analysisResponse.json() as Promise<AnalysisResponse>,
-          statusResponse.json() as Promise<StatusResponse>,
+          mlStatusResponse.json() as Promise<MlStatusResponse>,
+          simulatorStatusResponse.json() as Promise<SimulatorStatusResponse>,
         ]);
         if (!disposed) {
           setAnalysis(analysisPayload);
-          setStoredReadings(statusPayload.readings_loaded);
+          setStoredReadings(simulatorStatusPayload.readingsStored);
           setError(false);
         }
       } catch {
