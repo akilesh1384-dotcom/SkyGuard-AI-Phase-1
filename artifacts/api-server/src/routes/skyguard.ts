@@ -1,6 +1,6 @@
 import { asc } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { GetLatestReadingResponse, GetMlGroundTruthResponse, GetMlReadingsQueryParams, GetMlReadingsResponse, GetReadingHistoryQueryParams, GetReadingHistoryResponse, GetSimulatorStatusResponse, SetSimulatorModeBody, SetSimulatorModeResponse, StartSimulatorResponse, StopSimulatorResponse, ResetSimulatorResponse } from "@workspace/api-zod";
+import { GetLatestReadingResponse, GetMlGroundTruthResponse, GetMlReadingsQueryParams, GetMlReadingsResponse, GetReadingHistoryQueryParams, GetReadingHistoryResponse, GetReadingHistoryResponseItem, GetSimulatorStatusResponse, SetSimulatorModeBody, SetSimulatorModeResponse, StartSimulatorResponse, StopSimulatorResponse, ResetSimulatorResponse } from "@workspace/api-zod";
 import { db, sensorReadingsTable, simulatorEventsTable } from "@workspace/db";
 import { skyguardSimulator, type SimulatorModeValue } from "../lib/skyguard";
 
