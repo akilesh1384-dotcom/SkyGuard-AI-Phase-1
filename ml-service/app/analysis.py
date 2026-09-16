@@ -13,8 +13,8 @@ from .ml_placeholders import (
     ScoreFusion,
     StatisticalDetector,
     SensorDiagnosticDetector,
-    MultivariateDetector,
 )
+from .calibrated_multivariate import CalibratedMultivariateDetector
 from .alert_state import AlertStateManager
 from .models import (
     AnalyzeResponse,
@@ -40,36 +40,18 @@ def calculate_metrics(
     if len(truth) != len(predictions):
         raise ValueError("Truth and prediction sequences must have the same length")
 
-    true_positives = sum(
-        actual and predicted for actual, predicted in zip(truth, predictions)
-    )
-    false_positives = sum(
-        not actual and predicted for actual, predicted in zip(truth, predictions)
-    )
-    true_negatives = sum(
-        not actual and not predicted for actual, predicted in zip(truth, predictions)
-    )
-    false_negatives = sum(
-        actual and not predicted for actual, predicted in zip(truth, predictions)
-    )
+    true_positives = sum(actual and predicted for actual, predicted in zip(truth, predictions))
+    false_positives = sum(not actual and predicted for actual, predicted in zip(truth, predictions))
+    true_negatives = sum(not actual and not predicted for actual, predicted in zip(truth, predictions))
+    false_negatives = sum(actual and not predicted for actual, predicted in zip(truth, predictions))
 
     precision_denominator = true_positives + false_positives
     recall_denominator = true_positives + false_negatives
-    precision = (
-        true_positives / precision_denominator
-        if precision_denominator
-        else None
-    )
-    recall = (
-        true_positives / recall_denominator
-        if recall_denominator
-        else None
-    )
+    precision = true_positives / precision_denominator if precision_denominator else None
+    recall = true_positives / recall_denominator if recall_denominator else None
     f1_score = (
         2 * precision * recall / (precision + recall)
-        if precision is not None
-        and recall is not None
-        and precision + recall
+        if precision is not None and recall is not None and precision + recall
         else None
     )
 
@@ -93,7 +75,6 @@ def calculate_event_latencies(
     MISSING_DATA has no sensor rows during the outage by design, so its first
     detection is evaluated at the first reading after the gap.
     """
-
     ordered_results = sorted(results, key=lambda result: result.timestamp)
     latencies: list[EventLatency] = []
     for event in sorted(events, key=lambda item: item.start_timestamp):
@@ -103,9 +84,7 @@ def calculate_event_latencies(
                     result
                     for result in ordered_results
                     if result.timestamp >= (
-                        event.end_timestamp
-                        if event.end_timestamp is not None
-                        else event.start_timestamp
+                        event.end_timestamp if event.end_timestamp is not None else event.start_timestamp
                     )
                     and result.is_anomaly
                     and (
@@ -121,8 +100,7 @@ def calculate_event_latencies(
                     (
                         result
                         for result in ordered_results
-                        if result.timestamp > event.end_timestamp
-                        and not result.is_anomaly
+                        if result.timestamp > event.end_timestamp and not result.is_anomaly
                     ),
                     None,
                 )
@@ -131,36 +109,27 @@ def calculate_event_latencies(
                 result
                 for result in ordered_results
                 if result.timestamp >= event.start_timestamp
-                and (
-                    event.end_timestamp is None
-                    or result.timestamp <= event.end_timestamp
-                )
+                and (event.end_timestamp is None or result.timestamp <= event.end_timestamp)
             ]
-            first_after_gap = next(
-                (result for result in in_event if result.is_anomaly),
-                None,
-            )
+            first_after_gap = next((result for result in in_event if result.is_anomaly), None)
             first_normal_after_event = None
             if event.end_timestamp is not None:
                 first_normal_after_event = next(
                     (
                         result
                         for result in ordered_results
-                        if result.timestamp > event.end_timestamp
-                        and not result.is_anomaly
+                        if result.timestamp > event.end_timestamp and not result.is_anomaly
                     ),
                     None,
                 )
 
         detection_latency = (
             (first_after_gap.timestamp - event.start_timestamp).total_seconds()
-            if first_after_gap
-            else None
+            if first_after_gap else None
         )
         recovery_latency = (
             (first_normal_after_event.timestamp - event.end_timestamp).total_seconds()
-            if first_normal_after_event and event.end_timestamp
-            else None
+            if first_normal_after_event and event.end_timestamp else None
         )
         latencies.append(
             EventLatency(
@@ -180,32 +149,16 @@ def calculate_event_metrics(
     latencies: Sequence[EventLatency],
 ) -> dict[str, EventDetectionMetrics]:
     """Summarize detection at the event level, separate from row metrics."""
-
     latency_by_key = {
-        (
-            item.fault_type,
-            item.start_timestamp,
-        ): item
-        for item in latencies
+        (item.fault_type, item.start_timestamp): item for item in latencies
     }
     output: dict[str, EventDetectionMetrics] = {}
     fault_types = sorted({event.fault_type for event in events})
     for fault_type in fault_types:
         fault_events = [event for event in events if event.fault_type == fault_type]
-        fault_latencies = [
-            latency_by_key[(event.fault_type, event.start_timestamp)]
-            for event in fault_events
-        ]
-        detected = [
-            item
-            for item in fault_latencies
-            if item.detection_latency_seconds is not None
-        ]
-        recovered = [
-            item
-            for item in fault_latencies
-            if item.recovery_latency_seconds is not None
-        ]
+        fault_latencies = [latency_by_key[(event.fault_type, event.start_timestamp)] for event in fault_events]
+        detected = [item for item in fault_latencies if item.detection_latency_seconds is not None]
+        recovered = [item for item in fault_latencies if item.recovery_latency_seconds is not None]
         total = len(fault_events)
         detected_count = len(detected)
         output[fault_type] = EventDetectionMetrics(
@@ -215,13 +168,11 @@ def calculate_event_metrics(
             detection_rate=(detected_count / total if total else None),
             mean_detection_latency_seconds=(
                 sum(item.detection_latency_seconds for item in detected) / detected_count
-                if detected_count
-                else None
+                if detected_count else None
             ),
             mean_recovery_latency_seconds=(
                 sum(item.recovery_latency_seconds for item in recovered) / len(recovered)
-                if recovered
-                else None
+                if recovered else None
             ),
         )
     return output
@@ -230,11 +181,7 @@ def calculate_event_metrics(
 class AnalysisEngine:
     """Own the Layer 1 cache, baseline, detectors, and evaluation flow."""
 
-    def __init__(
-        self,
-        client: SkyGuardDataClient,
-        settings: Settings,
-    ):
+    def __init__(self, client: SkyGuardDataClient, settings: Settings):
         self.client = client
         self.settings = settings
         self.baseline_manager = BaselineManager(settings.baseline_size)
@@ -264,27 +211,20 @@ class AnalysisEngine:
         features = self._engineered_features()
         baseline_features = self._baseline_features(features)
 
-        ml_detector = MlDetector(
-            threshold=self.settings.anomaly_threshold,
-        )
+        ml_detector = MlDetector(threshold=self.settings.anomaly_threshold)
         ml_detector.fit(baseline_features)
 
-        statistical_results = StatisticalDetector(
-            threshold=self.settings.anomaly_threshold,
-        ).detect(features)
-
+        statistical_results = StatisticalDetector(threshold=self.settings.anomaly_threshold).detect(features)
         ml_results = ml_detector.detect(features)
 
         diagnostic_results = SensorDiagnosticDetector(
             frozen_consecutive=self.settings.diagnostic_frozen_consecutive,
             frozen_tolerance=self.settings.diagnostic_frozen_tolerance,
-            expected_interval_seconds=(
-                self.settings.diagnostic_expected_interval_seconds
-            ),
+            expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds,
             threshold=self.settings.anomaly_threshold,
         ).detect(features)
 
-        multivariate_detector = MultivariateDetector(
+        multivariate_detector = CalibratedMultivariateDetector(
             threshold=self.settings.multivariate_threshold,
         )
         multivariate_detector.fit(baseline_features)
@@ -301,9 +241,7 @@ class AnalysisEngine:
             multivariate_results,
         )
 
-        return AlertStateManager(
-            clear_after_normals=3,
-        ).apply(fused_results)
+        return AlertStateManager(clear_after_normals=3).apply(fused_results)
 
     def status(self) -> MlServiceStatus:
         if self.last_error and not self.readings:
@@ -314,7 +252,6 @@ class AnalysisEngine:
             status = "degraded"
         else:
             status = "ready"
-
         latest = self.readings[-1].timestamp if self.readings else None
         return MlServiceStatus(
             status=status,
@@ -330,25 +267,12 @@ class AnalysisEngine:
         return self.status()
 
     async def analyze(self, limit: int = 200) -> AnalyzeResponse:
-        # Always refresh the full dataset so baseline construction and
-        # detector training have access to the complete known-normal history.
         if not await self.refresh():
-            raise RuntimeError(
-                self.last_error or "Unable to load analysis data"
-            )
-
+            raise RuntimeError(self.last_error or "Unable to load analysis data")
         if not self.baseline.initialized:
             return self._cold_start_response()
-
-        # Run the detectors on the full chronological dataset.
         all_results = self._run_detectors()
-
-        # `limit` controls only how many results are returned to the caller.
-        if limit < 1:
-            limit = 1
-
-        results = all_results[-limit:]
-
+        results = all_results[-max(1, limit):]
         return AnalyzeResponse(
             status="ready",
             baseline_progress=self.baseline.progress,
@@ -360,7 +284,6 @@ class AnalysisEngine:
     async def evaluate(self) -> EvaluationResponse:
         if not await self.refresh():
             raise RuntimeError(self.last_error or "Unable to load evaluation data")
-
         if not self.events:
             return EvaluationResponse(
                 status="insufficient_labeled_data",
@@ -372,14 +295,10 @@ class AnalysisEngine:
                 evaluated_readings=0,
                 labeled_readings=0,
             )
-
         if not self.baseline.initialized:
             return EvaluationResponse(
                 status="insufficient_labeled_data",
-                message=(
-                    "At least 60 valid normal readings are required before "
-                    "evaluation can run."
-                ),
+                message="At least 60 valid normal readings are required before evaluation can run.",
                 baseline_progress=self.baseline.progress,
                 baseline_required=self.baseline.required,
                 baseline_initialized=False,
@@ -390,11 +309,7 @@ class AnalysisEngine:
 
         results = self._run_detectors()
         result_by_timestamp = {result.timestamp: result for result in results}
-        scored_readings = [
-            reading
-            for reading in self.readings
-            if reading.timestamp in result_by_timestamp
-        ]
+        scored_readings = [reading for reading in self.readings if reading.timestamp in result_by_timestamp]
         if not scored_readings:
             return EvaluationResponse(
                 status="insufficient_labeled_data",
@@ -407,32 +322,17 @@ class AnalysisEngine:
                 labeled_readings=0,
             )
 
-        predictions = [
-            result_by_timestamp[reading.timestamp].is_anomaly
-            for reading in scored_readings
-        ]
-        truth = [
-            reading_is_faulty(reading, self.events)
-            for reading in scored_readings
-        ]
+        predictions = [result_by_timestamp[reading.timestamp].is_anomaly for reading in scored_readings]
+        truth = [reading_is_faulty(reading, self.events) for reading in scored_readings]
         metrics = calculate_metrics(truth, predictions)
         event_latencies = calculate_event_latencies(self.events, results)
-        event_metrics_by_fault_type = calculate_event_metrics(
-            self.events,
-            event_latencies,
-        )
+        event_metrics_by_fault_type = calculate_event_metrics(self.events, event_latencies)
 
         by_fault_type = {}
         for fault_type in sorted({event.fault_type for event in self.events}):
-            type_truth = [
-                reading_is_faulty(reading, self.events, fault_type)
-                for reading in scored_readings
-            ]
+            type_truth = [reading_is_faulty(reading, self.events, fault_type) for reading in scored_readings]
             if sum(type_truth) > 0 and len(type_truth) >= 2:
-                by_fault_type[fault_type] = calculate_metrics(
-                    type_truth,
-                    predictions,
-                )
+                by_fault_type[fault_type] = calculate_metrics(type_truth, predictions)
 
         return EvaluationResponse(
             status="ready",
@@ -458,28 +358,10 @@ class AnalysisEngine:
         )
 
     def _engineered_features(self) -> list[EngineeredFeatures]:
-        fault_flags = [
-            reading_is_faulty(reading, self.events)
-            for reading in self.readings
-        ]
+        fault_flags = [reading_is_faulty(reading, self.events) for reading in self.readings]
         return self.feature_engineer.transform(self.readings, fault_flags)
 
-    def _baseline_features(
-        self,
-        _features: Sequence[EngineeredFeatures],
-    ) -> list[EngineeredFeatures]:
-        """
-        Build model-training features from the known-normal baseline itself.
-
-        This prevents fault-containing historical observations from contaminating
-        the causal window used to train the Isolation Forest.
-        """
-        baseline_features = self.feature_engineer.transform(
-            self.baseline.readings
-        )
-
-        return [
-            feature
-            for feature in baseline_features
-            if feature.valid_for_scoring
-        ]
+    def _baseline_features(self, _features: Sequence[EngineeredFeatures]) -> list[EngineeredFeatures]:
+        """Build model-training features from the known-normal baseline itself."""
+        baseline_features = self.feature_engineer.transform(self.baseline.readings)
+        return [feature for feature in baseline_features if feature.valid_for_scoring]
