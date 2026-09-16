@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Activity, BrainCircuit, CheckCircle2, CircleAlert, ChevronDown, Loader2, ShieldAlert, XCircle } from 'lucide-react';
 
@@ -48,36 +48,39 @@ export default function AiAnalysisPanel() {
   const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [mountNode, setMountNode] = useState<HTMLElement | null>(null);
+  const slotRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     let disposed = false;
-    let timer: number | undefined;
 
     const findDashboardSlot = () => {
-      if (disposed || mountNode) return;
+      if (disposed || slotRef.current) return;
+
       const metricCard = document.querySelector('[data-testid="card-metric-temperature"]');
       const metricGrid = metricCard?.parentElement;
       const container = metricGrid?.parentElement;
       if (!metricGrid || !container) return;
 
       const slot = document.createElement('div');
-      slot.className = 'mt-5 w-full';
+      slot.className = 'w-full';
       metricGrid.insertAdjacentElement('afterend', slot);
+      slotRef.current = slot;
       setMountNode(slot);
     };
 
+    findDashboardSlot();
     const observer = new MutationObserver(findDashboardSlot);
     observer.observe(document.body, { childList: true, subtree: true });
-    const retry = window.setInterval(findDashboardSlot, 150);
-    findDashboardSlot();
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.clearInterval(retry);
-      if (mountNode?.parentElement) mountNode.parentElement.removeChild(mountNode);
+      if (slotRef.current?.parentElement) {
+        slotRef.current.parentElement.removeChild(slotRef.current);
+      }
+      slotRef.current = null;
     };
-  }, [mountNode]);
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -126,7 +129,7 @@ export default function AiAnalysisPanel() {
       >
         <div className="flex items-center gap-3">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ffd06a] text-[#173844]">
-            <BrainCircuit className="h-4.5 w-4.5" />
+            <BrainCircuit className="h-4 w-4" />
           </span>
           <div>
             <div className="flex items-center gap-2 text-sm font-bold">
@@ -167,7 +170,7 @@ export default function AiAnalysisPanel() {
           <div className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-xl border border-[#315d65] bg-[#173d48]/80 p-3">
               <div className="flex items-center gap-2">
-                {anomalous ? <CircleAlert className="h-4.5 w-4.5 text-[#ef7168]" /> : <CheckCircle2 className="h-4.5 w-4.5 text-[#45d5c1]" />}
+                {anomalous ? <CircleAlert className="h-4 w-4 text-[#ef7168]" /> : <CheckCircle2 className="h-4 w-4 text-[#45d5c1]" />}
                 <div>
                   <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#7da4a7]">Status</div>
                   <div className="mt-0.5 text-sm font-bold">{anomalous ? 'Anomaly detected' : 'Station nominal'}</div>
