@@ -15,6 +15,10 @@ class AwsAnalysisEngine:
     Uses only temperature and relative humidity. Pressure-dependent and
     multivariate pressure features are deliberately disabled; unavailable
     pressure is never imputed or fabricated.
+
+    The baseline is still fitted from the complete known-normal baseline, but
+    live analysis only scans a recent window. This avoids reprocessing every
+    historical reading on each dashboard refresh.
     """
 
     def __init__(self, settings):
@@ -35,10 +39,10 @@ class AwsAnalysisEngine:
         initialized, _ = self.status()
         if not initialized:
             return []
-        results = self._run()
+        results = self._run(limit)
         return results[-max(1, limit):]
 
-    def _run(self) -> list[AnomalyResult]:
+    def _run(self, limit: int) -> list[AnomalyResult]:
         window = self.settings.rolling_window
         baseline = self.baseline
         if len(baseline) < self.settings.baseline_size:
@@ -52,13 +56,22 @@ class AwsAnalysisEngine:
         if abs(dmax - dmin) < 1e-9:
             dmax = dmin + 1.0
 
+        # Keep enough history for the rolling detector and alert hysteresis,
+        # but do not recompute the entire historical dataset every refresh.
+        recent_count = max(window + 3, window + limit + 3, 80)
+        analysis_readings = self.readings[-recent_count:]
+        start_offset = len(self.readings) - len(analysis_readings)
+
         output: list[AnomalyResult] = []
         diagnostics: list[DiagnosticResult] = []
         statistical: list[DetectorResult] = []
         ml_results: list[DetectorResult] = []
 
-        for i, reading in enumerate(self.readings):
-            history = self.readings[max(0, i - window):i]
+        for local_index, reading in enumerate(analysis_readings):
+            global_index = start_offset + local_index
+            if global_index <= 0:
+                continue
+            history = self.readings[max(0, global_index - window):global_index]
             if len(history) < window:
                 continue
             temps = np.asarray([r.temperature for r in history], dtype=float)
@@ -68,7 +81,7 @@ class AwsAnalysisEngine:
             tdev = abs((reading.temperature - float(np.median(temps))) / temp_scale)
             hdev = abs((reading.humidity - float(np.median(hums))) / hum_scale)
             deviation = min(max(tdev, hdev) / 6.0, 1.0)
-            prev = self.readings[i - 1]
+            prev = self.readings[global_index - 1]
             tchange = abs(reading.temperature - prev.temperature) / max(3 * float(np.std(temps, ddof=1)), 1e-6)
             hchange = abs(reading.humidity - prev.humidity) / max(3 * float(np.std(hums, ddof=1)), 1e-6)
             stat_score = float(np.clip(0.75 * deviation + 0.25 * min(max(tchange, hchange), 1.0), 0, 1))
