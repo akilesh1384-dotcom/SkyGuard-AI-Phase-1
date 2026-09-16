@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Activity, BrainCircuit, CheckCircle2, CircleAlert, ChevronDown, Loader2, ShieldAlert, XCircle } from 'lucide-react';
 
 type AnomalyResult = {
@@ -46,6 +47,37 @@ export default function AiAnalysisPanel() {
   const [analysis, setAnalysis] = useState<AnalysisResponse | null>(null);
   const [error, setError] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [mountNode, setMountNode] = useState<HTMLElement | null>(null);
+
+  useEffect(() => {
+    let disposed = false;
+    let timer: number | undefined;
+
+    const findDashboardSlot = () => {
+      if (disposed || mountNode) return;
+      const metricCard = document.querySelector('[data-testid="card-metric-temperature"]');
+      const metricGrid = metricCard?.parentElement;
+      const container = metricGrid?.parentElement;
+      if (!metricGrid || !container) return;
+
+      const slot = document.createElement('div');
+      slot.className = 'mt-5 w-full';
+      metricGrid.insertAdjacentElement('afterend', slot);
+      setMountNode(slot);
+    };
+
+    const observer = new MutationObserver(findDashboardSlot);
+    observer.observe(document.body, { childList: true, subtree: true });
+    const retry = window.setInterval(findDashboardSlot, 150);
+    findDashboardSlot();
+
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      window.clearInterval(retry);
+      if (mountNode?.parentElement) mountNode.parentElement.removeChild(mountNode);
+    };
+  }, [mountNode]);
 
   useEffect(() => {
     let disposed = false;
@@ -74,125 +106,122 @@ export default function AiAnalysisPanel() {
     };
   }, []);
 
+  if (!mountNode) return null;
+
   const result = analysis?.results?.[0];
   const ready = Boolean(analysis?.baseline_initialized && result);
   const anomalous = Boolean(result?.is_anomaly);
   const active = Boolean(result?.alert_active);
 
-  return (
+  return createPortal(
     <section
-      className="fixed bottom-4 right-4 z-50 w-[min(340px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[#356872] bg-[#123541]/95 text-[#eef8f5] shadow-[0_18px_55px_rgba(12,42,52,.32)] backdrop-blur-md"
+      className="w-full overflow-hidden rounded-[1.15rem] border border-[#356872] bg-[#123541] text-[#eef8f5] shadow-[0_12px_35px_rgba(12,42,52,.16)]"
       data-testid="panel-ai-analysis"
     >
       <button
         type="button"
-        className="flex w-full items-center justify-between border-b border-[#315d65] px-4 py-3 text-left"
+        className="flex w-full items-center justify-between border-b border-[#315d65] px-5 py-4 text-left"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
-        <div className="flex items-center gap-2.5">
-          <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#ffd06a] text-[#173844]">
-            <BrainCircuit className="h-4 w-4" />
+        <div className="flex items-center gap-3">
+          <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#ffd06a] text-[#173844]">
+            <BrainCircuit className="h-4.5 w-4.5" />
           </span>
           <div>
-            <div className="text-sm font-bold">AI Analysis</div>
-            <div className="text-[9px] uppercase tracking-[0.16em] text-[#8db5b7]">real-time anomaly engine</div>
+            <div className="flex items-center gap-2 text-sm font-bold">
+              AI Analysis
+              <span className="flex items-center gap-1 text-[9px] font-bold uppercase tracking-[0.12em] text-[#8db5b7]"><Activity className="h-3 w-3" /> live</span>
+            </div>
+            <div className="text-[9px] uppercase tracking-[0.16em] text-[#8db5b7]">real-time anomaly engine · baseline {analysis ? `${analysis.baseline_progress}/${analysis.baseline_required}` : 'initializing'}</div>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-1.5 text-[9px] font-bold uppercase tracking-[0.12em] text-[#8db5b7]">
-            <Activity className="h-3 w-3" /> live
-          </span>
+        <div className="flex items-center gap-3">
+          {ready && result ? (
+            <div className="hidden items-center gap-2 sm:flex">
+              <span className={`h-2 w-2 rounded-full ${anomalous ? 'bg-[#ef7168]' : 'bg-[#45d5c1]'}`} />
+              <span className="text-[10px] font-bold uppercase tracking-[0.12em] text-[#c7dfdc]">{anomalous ? 'Anomaly detected' : 'Station nominal'}</span>
+              <span className="font-data text-sm font-bold text-[#f0faf7]">{percent(result.final_score)}</span>
+            </div>
+          ) : null}
           <ChevronDown className={`h-4 w-4 text-[#8db5b7] transition-transform ${expanded ? 'rotate-180' : ''}`} />
         </div>
       </button>
 
       {!ready && !error && (
-        <div className="flex items-center gap-2 px-4 py-4 text-xs text-[#b6d0d0]">
+        <div className="flex items-center gap-2 px-5 py-4 text-xs text-[#b6d0d0]">
           <Loader2 className="h-4 w-4 animate-spin text-[#45d5c1]" />
           Initializing anomaly baseline…
         </div>
       )}
 
       {error && (
-        <div className="flex items-start gap-2 px-4 py-4 text-xs text-[#ffd1c8]">
+        <div className="flex items-start gap-2 px-5 py-4 text-xs text-[#ffd1c8]">
           <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-[#ef7168]" />
           <div>ML service unavailable. The station dashboard is still running.</div>
         </div>
       )}
 
       {ready && result && (
-        <div className="p-3">
-          <div className="flex items-center justify-between rounded-xl border border-[#315d65] bg-[#173d48]/80 p-3">
-            <div className="flex items-center gap-2.5 min-w-0">
-              {anomalous ? (
-                <CircleAlert className="h-5 w-5 shrink-0 text-[#ef7168]" />
-              ) : (
-                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#45d5c1]" />
-              )}
-              <div className="min-w-0">
-                <div className="truncate text-xs font-bold uppercase tracking-[0.1em]">
-                  {anomalous ? 'Anomaly detected' : 'Station nominal'}
-                </div>
-                <div className="mt-0.5 text-[10px] text-[#91b4b6]">
-                  Alert {active ? result.alert_state : 'NORMAL'} · {faultLabel(result.fault_type)}
+        <div className="px-5 pb-5 pt-4">
+          <div className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-xl border border-[#315d65] bg-[#173d48]/80 p-3">
+              <div className="flex items-center gap-2">
+                {anomalous ? <CircleAlert className="h-4.5 w-4.5 text-[#ef7168]" /> : <CheckCircle2 className="h-4.5 w-4.5 text-[#45d5c1]" />}
+                <div>
+                  <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#7da4a7]">Status</div>
+                  <div className="mt-0.5 text-sm font-bold">{anomalous ? 'Anomaly detected' : 'Station nominal'}</div>
                 </div>
               </div>
             </div>
-            <div className="ml-3 shrink-0 text-right">
-              <div className="font-data text-xl font-bold">{percent(result.final_score)}</div>
-              <div className="text-[8px] uppercase tracking-[0.12em] text-[#86aeb1]">score</div>
+            <div className="rounded-xl border border-[#315d65] bg-[#173d48]/80 p-3">
+              <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#7da4a7]">Fault type</div>
+              <div className="mt-1 text-sm font-semibold">{faultLabel(result.fault_type)}</div>
             </div>
+            <div className="rounded-xl border border-[#315d65] bg-[#173d48]/80 p-3">
+              <div className="text-[9px] font-bold uppercase tracking-[0.12em] text-[#7da4a7]">Affected</div>
+              <div className="mt-1 truncate text-sm font-semibold">{result.affected_variable ?? 'None'}</div>
+            </div>
+          </div>
+
+          <div className="mt-3 flex flex-wrap items-center gap-3 rounded-xl bg-[#102f39]/80 px-3 py-2.5 text-[10px] text-[#9fc0c0]">
+            <span>Alert <strong className="text-[#e9f6f3]">{active ? result.alert_state : 'NORMAL'}</strong></span>
+            <span>Final score <strong className="text-[#e9f6f3]">{percent(result.final_score)}</strong></span>
+            <span>Baseline <strong className="text-[#e9f6f3]">{analysis.baseline_progress}/{analysis.baseline_required}</strong></span>
           </div>
 
           {!expanded && (
             <button
               type="button"
               onClick={() => setExpanded(true)}
-              className="mt-2 w-full rounded-lg bg-[#102f39]/80 px-3 py-2 text-[10px] font-semibold text-[#b9d5d2] hover:bg-[#163b46]"
+              className="mt-3 w-full rounded-lg bg-[#183f49] px-3 py-2 text-[10px] font-semibold text-[#c7e1de] transition hover:bg-[#204955]"
             >
               View detector breakdown and explanation
             </button>
           )}
 
           {expanded && (
-            <div className="mt-3 max-h-[52vh] overflow-y-auto pr-1">
-              <div className="grid grid-cols-2 gap-3 text-xs">
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">Fault type</div>
-                  <div className="mt-1 font-semibold text-[#e9f6f3]">{faultLabel(result.fault_type)}</div>
-                </div>
-                <div>
-                  <div className="text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">Affected</div>
-                  <div className="mt-1 font-semibold text-[#e9f6f3]">{result.affected_variable ?? 'None'}</div>
-                </div>
-              </div>
-
-              <div className="mt-4">
-                <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">Model signals</div>
-                <div className="space-y-2.5">
-                  {[
-                    ['Statistical', result.statistical_score],
-                    ['Isolation Forest', result.ml_score],
-                    ['Diagnostic / multivariate', result.diagnostic_score],
-                  ].map(([label, score]) => (
-                    <div key={label as string}>
-                      <div className="mb-1 flex items-center justify-between text-[10px]">
-                        <span className="text-[#b5cecf]">{label as string}</span>
-                        <span className="font-data font-semibold text-[#e8f5f2]">{percent(score as number)}</span>
-                      </div>
-                      <div className="h-1.5 overflow-hidden rounded-full bg-[#294f58]">
-                        <div
-                          className={`h-full rounded-full ${toneForScore(score as number)}`}
-                          style={{ width: `${Math.max(2, Math.min(100, (score as number) * 100))}%` }}
-                        />
-                      </div>
+            <div className="mt-4">
+              <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">Model signals</div>
+              <div className="grid gap-3 md:grid-cols-3">
+                {[
+                  ['Statistical', result.statistical_score],
+                  ['Isolation Forest', result.ml_score],
+                  ['Diagnostic / multivariate', result.diagnostic_score],
+                ].map(([label, score]) => (
+                  <div key={label as string} className="rounded-lg bg-[#173d48]/80 p-3">
+                    <div className="mb-1 flex items-center justify-between text-[10px]">
+                      <span className="text-[#b5cecf]">{label as string}</span>
+                      <span className="font-data font-semibold text-[#e8f5f2]">{percent(score as number)}</span>
                     </div>
-                  ))}
-                </div>
+                    <div className="h-1.5 overflow-hidden rounded-full bg-[#294f58]">
+                      <div className={`h-full rounded-full ${toneForScore(score as number)}`} style={{ width: `${Math.max(2, Math.min(100, (score as number) * 100))}%` }} />
+                    </div>
+                  </div>
+                ))}
               </div>
 
-              <div className="mt-4 rounded-xl bg-[#102f39]/80 p-3">
+              <div className="mt-3 rounded-xl bg-[#102f39]/80 p-3">
                 <div className="mb-2 flex items-center gap-2 text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">
                   <ShieldAlert className="h-3 w-3" /> Why the engine flagged it
                 </div>
@@ -205,17 +234,18 @@ export default function AiAnalysisPanel() {
                 </div>
               </div>
 
-              <div className="mt-4 flex items-center justify-between border-t border-[#315d65] pt-3 text-[9px] uppercase tracking-[0.12em] text-[#78a0a3]">
-                <span>Baseline</span>
-                <span className="flex items-center gap-1.5 text-[#b9d5d2]">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#45d5c1]" />
-                  {analysis.baseline_progress}/{analysis.baseline_required} ready
-                </span>
-              </div>
+              <button
+                type="button"
+                onClick={() => setExpanded(false)}
+                className="mt-3 text-[10px] font-semibold text-[#9fc0c0] underline decoration-[#4c7780] underline-offset-2 hover:text-[#eef8f5]"
+              >
+                Collapse details
+              </button>
             </div>
           )}
         </div>
       )}
-    </section>
+    </section>,
+    mountNode,
   );
 }
