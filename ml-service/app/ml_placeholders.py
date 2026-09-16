@@ -741,10 +741,8 @@ class ScoreFusion:
                     timestamp=timestamp,
                     statistical_score=statistical.score,
                     ml_score=ml.score,
-                    diagnostic_score=max(
-                        diagnostic.diagnostic_score,
-                        multivariate.score,
-                    ),
+                    diagnostic_score=diagnostic.diagnostic_score,
+                    multivariate_score=multivariate.score,
                     final_score=final_score,
                     is_anomaly=is_anomaly,
                     alert_active=False,
