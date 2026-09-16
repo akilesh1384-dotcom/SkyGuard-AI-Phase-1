@@ -112,6 +112,13 @@ class MlServiceStatus(BaseModel):
     sensor_mode: str = "FULL"
 
 
+class ShapContribution(BaseModel):
+    feature: str
+    value: float
+    shap_value: float
+    direction: str
+
+
 class AnomalyResult(BaseModel):
     timestamp: datetime
     statistical_score: float = Field(ge=0, le=1)
@@ -126,6 +133,8 @@ class AnomalyResult(BaseModel):
     fault_type: str
     affected_variable: str | None = None
     reasons: list[str]
+    shap_base_value: float | None = None
+    shap_contributions: list[ShapContribution] = Field(default_factory=list)
 
 
 class AnalyzeResponse(BaseModel):
