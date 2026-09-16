@@ -1,17 +1,14 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
-import { RadioTower, TriangleAlert } from 'lucide-react';
+import { WifiOff } from 'lucide-react';
 
 type SimulatorStatus = {
   status: string;
   mode: string;
   lastReadingAt?: string | null;
-  readingsStored?: number;
 };
 
 type GroundTruthEvent = {
   fault_type: string;
-  affected_variable: string;
   start_timestamp: string;
   end_timestamp: string | null;
 };
@@ -19,112 +16,72 @@ type GroundTruthEvent = {
 function formatDuration(seconds: number) {
   const safe = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safe / 60);
-  const remaining = safe % 60;
-  return minutes > 0 ? `${minutes}m ${remaining}s` : `${remaining}s`;
+  return minutes > 0 ? `${minutes}m ${safe % 60}s` : `${safe}s`;
 }
 
 export default function MissingDataBanner() {
-  const [status, setStatus] = useState<SimulatorStatus | null>(null);
-  const [event, setEvent] = useState<GroundTruthEvent | null>(null);
-  const [now, setNow] = useState(() => Date.now());
-  const [mountNode, setMountNode] = useState<HTMLElement | null>(null);
+  const [since, setSince] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now());
 
   useEffect(() => {
-    let disposed = false;
-    let observer: MutationObserver | undefined;
-
-    const findSlot = () => {
-      if (disposed || mountNode) return;
-      const statusSection = document.querySelector('[data-testid="section-status-overview"]');
-      if (!statusSection || !statusSection.parentElement) return;
-      const slot = document.createElement('div');
-      slot.className = 'w-full';
-      statusSection.insertAdjacentElement('afterend', slot);
-      setMountNode(slot);
-    };
-
-    findSlot();
-    observer = new MutationObserver(findSlot);
-    observer.observe(document.body, { childList: true, subtree: true });
-
-    return () => {
-      disposed = true;
-      observer?.disconnect();
-      if (mountNode?.parentElement) mountNode.parentElement.removeChild(mountNode);
-    };
-  }, [mountNode]);
-
-  useEffect(() => {
-    let disposed = false;
+    let stopped = false;
     let timer: number | undefined;
 
-    const load = async () => {
+    const check = async () => {
       try {
         const [statusResponse, eventsResponse] = await Promise.all([
           fetch('/api/status', { cache: 'no-store' }),
           fetch('/api/ml/ground-truth', { cache: 'no-store' }),
         ]);
-        if (!statusResponse.ok || !eventsResponse.ok) throw new Error('status fetch failed');
+        if (!statusResponse.ok || !eventsResponse.ok) throw new Error('status unavailable');
 
-        const nextStatus = (await statusResponse.json()) as SimulatorStatus;
+        const status = (await statusResponse.json()) as SimulatorStatus;
         const events = (await eventsResponse.json()) as GroundTruthEvent[];
-        const latest = events
-          .filter((item) => item.fault_type === 'MISSING_DATA')
-          .sort((a, b) => new Date(b.start_timestamp).getTime() - new Date(a.start_timestamp).getTime())[0] ?? null;
+        const activeEvent = events
+          .filter((event) => event.fault_type === 'MISSING_DATA' && !event.end_timestamp)
+          .sort((a, b) => new Date(b.start_timestamp).getTime() - new Date(a.start_timestamp).getTime())[0];
 
-        if (!disposed) {
-          setStatus(nextStatus);
-          setEvent(latest?.end_timestamp ? null : latest);
+        if (!stopped) {
+          setSince(status.status === 'SIMULATING' && status.mode === 'MISSING_DATA' && activeEvent ? activeEvent.start_timestamp : null);
           setNow(Date.now());
         }
       } catch {
-        // The main dashboard already exposes connectivity/service state.
+        // Do not disturb the main dashboard if the optional banner check fails.
       } finally {
-        if (!disposed) timer = window.setTimeout(load, 1000);
+        if (!stopped) timer = window.setTimeout(check, 1000);
       }
     };
 
-    load();
+    check();
     return () => {
-      disposed = true;
+      stopped = true;
       if (timer) window.clearTimeout(timer);
     };
   }, []);
 
   useEffect(() => {
-    if (!event) return;
-    const interval = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(interval);
-  }, [event]);
+    if (!since) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [since]);
 
-  if (!mountNode || !status || status.status !== 'SIMULATING' || status.mode !== 'MISSING_DATA' || !event) return null;
+  if (!since) return null;
 
-  const duration = (now - new Date(event.start_timestamp).getTime()) / 1000;
+  const duration = (now - new Date(since).getTime()) / 1000;
 
-  return createPortal(
-    <section
-      className="mx-auto mb-5 flex w-full items-center gap-4 rounded-[1rem] border border-[#f0ad4e]/55 bg-[#fff5df] px-4 py-3 text-[#754c10] shadow-sm"
-      role="status"
-      aria-live="polite"
-      data-testid="banner-missing-data"
-    >
-      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7c76f] text-[#5d3d0d]">
-        <RadioTower className="h-4 w-4" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
-          <span>Telemetry interrupted</span>
-          <span className="rounded-full bg-[#f7c76f]/45 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]">Missing data</span>
+  return (
+    <div className="pointer-events-none fixed inset-x-0 top-3 z-[100] flex justify-center px-4" data-testid="banner-missing-data">
+      <section className="pointer-events-auto flex w-full max-w-4xl items-center gap-4 rounded-2xl border border-[#f0ad4e]/70 bg-[#fff5df] px-4 py-3 text-[#754c10] shadow-lg">
+        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f7c76f] text-[#5d3d0d]"><WifiOff className="h-4 w-4" /></div>
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2 text-sm font-bold">
+            <span>Telemetry interrupted</span>
+            <span className="rounded-full bg-[#f7c76f]/50 px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]">Missing data</span>
+          </div>
+          <p className="mt-1 text-xs text-[#8b6324]">No new sensor readings are being received. The last valid reading remains on screen for reference.</p>
         </div>
-        <div className="mt-1 text-xs text-[#8b6324]">
-          No new sensor readings are being received. Last valid reading: {status.lastReadingAt ? new Date(status.lastReadingAt).toLocaleTimeString('en-IN') : 'unknown'}.
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2 font-data text-sm font-bold text-[#754c10]">
-        <TriangleAlert className="h-4 w-4" />
-        {formatDuration(duration)}
-      </div>
-    </section>,
-    mountNode,
+        <div className="shrink-0 text-right font-data text-sm font-bold"><div>{formatDuration(duration)}</div><div className="text-[9px] uppercase tracking-[0.12em]">outage</div></div>
+      </section>
+    </div>
   );
 }
