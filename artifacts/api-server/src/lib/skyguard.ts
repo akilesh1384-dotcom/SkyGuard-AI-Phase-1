@@ -27,6 +27,13 @@ type SensorReadingInput = {
   pressure: number;
 };
 
+type PhysicalSensorReadingInput = {
+  timestamp: Date;
+  temperature: number;
+  humidity: number;
+  pressure: null;
+};
+
 type BroadcastMessage =
   | { type: "reading"; reading: SensorReading }
   | { type: "status"; status: Awaited<ReturnType<SkyguardSimulator["getStatus"]>> }
@@ -119,6 +126,41 @@ export function validateSensorReading(
   }
 
   return { timestamp, temperature, humidity, pressure };
+}
+
+export function validatePhysicalSensorReading(
+  candidate: unknown,
+): PhysicalSensorReadingInput {
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("Physical sensor reading must be an object");
+  }
+
+  const reading = candidate as Record<string, unknown>;
+  const timestamp = new Date(String(reading.timestamp));
+
+  if (
+    !reading.timestamp ||
+    Number.isNaN(timestamp.getTime()) ||
+    typeof reading.temperature !== "number" ||
+    !Number.isFinite(reading.temperature) ||
+    typeof reading.humidity !== "number" ||
+    !Number.isFinite(reading.humidity) ||
+    (reading.pressure !== null && reading.pressure !== undefined)
+  ) {
+    throw new Error("Physical reading must contain timestamp, temperature, humidity, and pressure: null");
+  }
+
+  const temperature = reading.temperature;
+  const humidity = reading.humidity;
+
+  if (temperature < -80 || temperature > 70) {
+    throw new Error("Temperature is outside physical sanity limits");
+  }
+  if (humidity < 0 || humidity > 100) {
+    throw new Error("Humidity is outside physical sanity limits");
+  }
+
+  return { timestamp, temperature, humidity, pressure: null };
 }
 
 export class SkyguardSimulator {
@@ -256,9 +298,6 @@ export class SkyguardSimulator {
       if (!nextReading) {
         await this.markActiveFaultTimestamp(timestamp);
         this.missingTick += 1;
-        // MISSING_DATA is intentionally a telemetry outage: there is no sensor
-        // row to insert. Keep the simulator visibly active by broadcasting a
-        // missing-data heartbeat every tick rather than only every third tick.
         this.broadcast({
           type: "missing_data",
           timestamp: timestamp.toISOString(),
@@ -293,6 +332,24 @@ export class SkyguardSimulator {
 
     this.lastGenerated = reading;
     await this.markActiveFaultTimestamp(reading.timestamp);
+    return stored;
+  }
+
+  async ingestPhysicalReading(candidate: unknown) {
+    const reading = validatePhysicalSensorReading(candidate);
+    const [stored] = await db
+      .insert(sensorReadingsTable)
+      .values(reading)
+      .onConflictDoNothing({
+        target: sensorReadingsTable.timestamp,
+      })
+      .returning();
+
+    if (!stored) {
+      throw new Error("Duplicate sensor reading timestamp");
+    }
+
+    this.broadcast({ type: "reading", reading: stored });
     return stored;
   }
 
