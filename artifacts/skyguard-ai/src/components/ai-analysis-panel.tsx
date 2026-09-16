@@ -7,6 +7,7 @@ type AnomalyResult = {
   statistical_score: number;
   ml_score: number;
   diagnostic_score: number;
+  multivariate_score: number;
   final_score: number;
   is_anomaly: boolean;
   alert_active: boolean;
@@ -206,14 +207,15 @@ export default function AiAnalysisPanel() {
           {expanded && (
             <div className="mt-4">
               <div className="mb-2 text-[9px] font-bold uppercase tracking-[0.13em] text-[#7da4a7]">Model signals</div>
-              <div className="grid gap-3 md:grid-cols-3">
+              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
                 {[
                   ['Statistical', result.statistical_score],
                   ['Isolation Forest', result.ml_score],
-                  ['Diagnostic / multivariate', result.diagnostic_score],
+                  ['Sensor diagnostics', result.diagnostic_score],
+                  ['Multivariate consistency', result.multivariate_score],
                 ].map(([label, score]) => (
                   <div key={label as string} className="rounded-lg bg-[#173d48]/80 p-3">
-                    <div className="mb-1 flex items-center justify-between text-[10px]">
+                    <div className="mb-1 flex items-center justify-between gap-2 text-[10px]">
                       <span className="text-[#b5cecf]">{label as string}</span>
                       <span className="font-data font-semibold text-[#e8f5f2]">{percent(score as number)}</span>
                     </div>
