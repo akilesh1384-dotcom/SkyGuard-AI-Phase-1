@@ -7,30 +7,13 @@ from collections.abc import Sequence
 from .baseline import Baseline, BaselineManager
 from .config import Settings
 from .data_client import SkyGuardDataClient, reading_is_faulty
-from .ml_placeholders import (
-    FeatureEngineer,
-    MlDetector,
-    StatisticalDetector,
-    SensorDiagnosticDetector,
-)
+from .ml_placeholders import MlDetector, StatisticalDetector, SensorDiagnosticDetector, FeatureEngineer
 from .calibrated_multivariate import CalibratedMultivariateDetector
 from .calibrated_fusion import CalibratedScoreFusion
 from .alert_state import AlertStateManager
 from .aws_analysis import AwsAnalysisEngine
 from .sensor_mode import SensorMode
-from .models import (
-    AnalyzeResponse,
-    AnomalyResult,
-    DiagnosticResult,
-    EngineeredFeatures,
-    EventDetectionMetrics,
-    EventLatency,
-    EvaluationMetrics,
-    EvaluationResponse,
-    GroundTruthEvent,
-    MlServiceStatus,
-    SensorReading,
-)
+from .models import AnalyzeResponse, AnomalyResult, EngineeredFeatures, EventDetectionMetrics, EventLatency, EvaluationMetrics, EvaluationResponse, GroundTruthEvent, MlServiceStatus, SensorReading
 
 logger = logging.getLogger(__name__)
 
@@ -52,19 +35,11 @@ def calculate_event_latencies(events: Sequence[GroundTruthEvent], results: Seque
     ordered_results = sorted(results, key=lambda result: result.timestamp)
     latencies: list[EventLatency] = []
     for event in sorted(events, key=lambda item: item.start_timestamp):
-        if event.fault_type == "MISSING_DATA":
-            first = next((r for r in ordered_results if r.timestamp >= (event.end_timestamp or event.start_timestamp) and r.is_anomaly and (r.fault_type == "MISSING_DATA" or "missing_data" in r.reasons)), None)
-        else:
+        first = next((r for r in ordered_results if r.timestamp >= (event.end_timestamp or event.start_timestamp) and r.is_anomaly and (event.fault_type != "MISSING_DATA" or r.fault_type == "MISSING_DATA" or "missing_data" in r.reasons)), None)
+        if event.fault_type != "MISSING_DATA":
             first = next((r for r in ordered_results if r.timestamp >= event.start_timestamp and (event.end_timestamp is None or r.timestamp <= event.end_timestamp) and r.is_anomaly), None)
         normal = next((r for r in ordered_results if event.end_timestamp and r.timestamp > event.end_timestamp and not r.is_anomaly), None)
-        latencies.append(EventLatency(
-            fault_type=event.fault_type,
-            affected_variable=event.affected_variable,
-            start_timestamp=event.start_timestamp,
-            end_timestamp=event.end_timestamp,
-            detection_latency_seconds=(first.timestamp - event.start_timestamp).total_seconds() if first else None,
-            recovery_latency_seconds=(normal.timestamp - event.end_timestamp).total_seconds() if normal and event.end_timestamp else None,
-        ))
+        latencies.append(EventLatency(fault_type=event.fault_type, affected_variable=event.affected_variable, start_timestamp=event.start_timestamp, end_timestamp=event.end_timestamp, detection_latency_seconds=(first.timestamp - event.start_timestamp).total_seconds() if first else None, recovery_latency_seconds=(normal.timestamp - event.end_timestamp).total_seconds() if normal and event.end_timestamp else None))
     return latencies
 
 
@@ -77,14 +52,7 @@ def calculate_event_metrics(events: Sequence[GroundTruthEvent], latencies: Seque
         detected = [item for item in items if item.detection_latency_seconds is not None]
         recovered = [item for item in items if item.recovery_latency_seconds is not None]
         total = len(items)
-        output[fault_type] = EventDetectionMetrics(
-            total_events=total,
-            detected_events=len(detected),
-            missed_events=total - len(detected),
-            detection_rate=len(detected) / total if total else None,
-            mean_detection_latency_seconds=sum(i.detection_latency_seconds for i in detected) / len(detected) if detected else None,
-            mean_recovery_latency_seconds=sum(i.recovery_latency_seconds for i in recovered) / len(recovered) if recovered else None,
-        )
+        output[fault_type] = EventDetectionMetrics(total_events=total, detected_events=len(detected), missed_events=total-len(detected), detection_rate=len(detected)/total if total else None, mean_detection_latency_seconds=sum(i.detection_latency_seconds for i in detected)/len(detected) if detected else None, mean_recovery_latency_seconds=sum(i.recovery_latency_seconds for i in recovered)/len(recovered) if recovered else None)
     return output
 
 
@@ -126,21 +94,11 @@ class AnalysisEngine:
         ml_detector.fit(baseline_features)
         statistical_results = StatisticalDetector(threshold=self.settings.anomaly_threshold).detect(features)
         ml_results = ml_detector.detect(features)
-        diagnostic_results = SensorDiagnosticDetector(
-            frozen_consecutive=self.settings.diagnostic_frozen_consecutive,
-            frozen_tolerance=self.settings.diagnostic_frozen_tolerance,
-            expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds,
-            threshold=self.settings.anomaly_threshold,
-        ).detect(features)
-        multivariate_results = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold).fit_and_detect(baseline_features, features) if False else None
+        diagnostic_results = SensorDiagnosticDetector(frozen_consecutive=self.settings.diagnostic_frozen_consecutive, frozen_tolerance=self.settings.diagnostic_frozen_tolerance, expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds, threshold=self.settings.anomaly_threshold).detect(features)
         multivariate_detector = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold)
         multivariate_detector.fit(baseline_features)
         multivariate_results = multivariate_detector.detect(features)
-        fused_results = CalibratedScoreFusion(
-            statistical_weight=self.settings.statistical_weight,
-            ml_weight=self.settings.ml_weight,
-            threshold=self.settings.anomaly_threshold,
-        ).fuse(statistical_results, ml_results, diagnostic_results, multivariate_results)
+        fused_results = CalibratedScoreFusion(statistical_weight=self.settings.statistical_weight, ml_weight=self.settings.ml_weight, threshold=self.settings.anomaly_threshold).fuse(statistical_results, ml_results, diagnostic_results, multivariate_results)
         return AlertStateManager(clear_after_normals=3).apply(fused_results)
 
     async def get_status(self, sensor_mode: str | None = None) -> MlServiceStatus:
@@ -150,9 +108,9 @@ class AnalysisEngine:
             aws = AwsAnalysisEngine(self.settings)
             aws.refresh(self.readings, self.events)
             initialized, progress = aws.status()
-            status = "ready" if initialized else "collecting_baseline"
-            return MlServiceStatus(status=status, readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=initialized, baseline_progress=progress, baseline_required=self.settings.baseline_size, sensor_mode=mode.value)
-        return MlServiceStatus(**self.status().model_dump(), sensor_mode=mode.value)
+            return MlServiceStatus(status="ready" if initialized else "collecting_baseline", readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=initialized, baseline_progress=progress, baseline_required=self.settings.baseline_size, sensor_mode=mode.value)
+        base_status = self.status()
+        return base_status.model_copy(update={"sensor_mode": mode.value})
 
     def status(self) -> MlServiceStatus:
         if self.last_error and not self.readings:
@@ -163,7 +121,7 @@ class AnalysisEngine:
             status = "degraded"
         else:
             status = "ready"
-        return MlServiceStatus(status=status, readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=self.baseline.initialized, baseline_progress=self.baseline.progress, baseline_required=self.baseline.required)
+        return MlServiceStatus(status=status, readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=self.baseline.initialized, baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, sensor_mode=SensorMode.FULL.value)
 
     async def analyze(self, limit: int = 200, sensor_mode: str | None = None) -> AnalyzeResponse:
         mode = self.normalize_mode(sensor_mode)
