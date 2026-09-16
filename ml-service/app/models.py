@@ -102,10 +102,7 @@ class EngineeredFeatures:
         if not self.valid_for_scoring:
             raise ValueError("Feature row does not have enough causal history")
 
-        values = [
-            getattr(self, name)
-            for name in self.feature_names
-        ]
+        values = [getattr(self, name) for name in self.feature_names]
         if any(value is None for value in values):
             raise ValueError("Valid feature row contains an unset feature")
         return [float(value) for value in values]
@@ -140,21 +137,14 @@ class MlServiceStatus(BaseModel):
 
 class AnomalyResult(BaseModel):
     timestamp: datetime
-
-    # Raw detector outputs
     statistical_score: float = Field(ge=0, le=1)
     ml_score: float = Field(ge=0, le=1)
     diagnostic_score: float = Field(ge=0, le=1)
     multivariate_score: float = Field(ge=0, le=1)
     final_score: float = Field(ge=0, le=1)
-
-    # Raw model decision
     is_anomaly: bool
-
-    # Operational alert state
     alert_active: bool = False
     alert_state: str = "NORMAL"
-
     diagnostic_anomaly: bool
     fault_type: str
     affected_variable: str | None = None
@@ -179,6 +169,15 @@ class EvaluationMetrics(BaseModel):
     f1_score: float | None = Field(default=None, ge=0, le=1)
 
 
+class EventDetectionMetrics(BaseModel):
+    total_events: int = Field(ge=0)
+    detected_events: int = Field(ge=0)
+    missed_events: int = Field(ge=0)
+    detection_rate: float | None = Field(default=None, ge=0, le=1)
+    mean_detection_latency_seconds: float | None = Field(default=None, ge=0)
+    mean_recovery_latency_seconds: float | None = Field(default=None, ge=0)
+
+
 class EventLatency(BaseModel):
     fault_type: str
     affected_variable: str
@@ -199,4 +198,5 @@ class EvaluationResponse(BaseModel):
     labeled_readings: int = Field(ge=0)
     metrics: EvaluationMetrics | None = None
     by_fault_type: dict[str, EvaluationMetrics] = Field(default_factory=dict)
+    event_metrics_by_fault_type: dict[str, EventDetectionMetrics] = Field(default_factory=dict)
     event_latencies: list[EventLatency] = Field(default_factory=list)
