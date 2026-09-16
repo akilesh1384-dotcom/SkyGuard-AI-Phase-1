@@ -26,6 +26,7 @@ import {
 } from "../lib/skyguard";
 
 const router: IRouter = Router();
+const ML_SERVICE_URL = process.env.ML_SERVICE_URL ?? "http://localhost:8001";
 
 router.get("/latest", async (_req, res): Promise<void> => {
   const latest = await skyguardSimulator.getLatest();
@@ -69,6 +70,44 @@ router.get("/ml/ground-truth", async (_req, res): Promise<void> => {
     .orderBy(asc(simulatorEventsTable.startTimestamp));
 
   res.json(GetMlGroundTruthResponse.parse(events));
+});
+
+router.get("/ml/analyze", async (req, res): Promise<void> => {
+  const rawLimit = Array.isArray(req.query.limit)
+    ? req.query.limit[0]
+    : req.query.limit;
+  const limit = rawLimit === undefined ? 1 : Number(rawLimit);
+
+  if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
+    res.status(400).json({ error: "limit must be an integer between 1 and 200" });
+    return;
+  }
+
+  try {
+    const response = await fetch(`${ML_SERVICE_URL}/ml/analyze?limit=${limit}`);
+    const payload = await response.json();
+    res.status(response.status).json(payload);
+  } catch (error) {
+    res.status(503).json({
+      status: "unavailable",
+      error: "ML service is unavailable",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+router.get("/ml/status", async (_req, res): Promise<void> => {
+  try {
+    const response = await fetch(`${ML_SERVICE_URL}/ml/status`);
+    const payload = await response.json();
+    res.status(response.status).json(payload);
+  } catch (error) {
+    res.status(503).json({
+      status: "unavailable",
+      error: "ML service is unavailable",
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
 });
 
 router.get("/history", async (req, res): Promise<void> => {
