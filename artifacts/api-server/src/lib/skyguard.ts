@@ -256,12 +256,13 @@ export class SkyguardSimulator {
       if (!nextReading) {
         await this.markActiveFaultTimestamp(timestamp);
         this.missingTick += 1;
-        if (this.missingTick % 3 === 0) {
-          this.broadcast({
-            type: "missing_data",
-            timestamp: timestamp.toISOString(),
-          });
-        }
+        // MISSING_DATA is intentionally a telemetry outage: there is no sensor
+        // row to insert. Keep the simulator visibly active by broadcasting a
+        // missing-data heartbeat every tick rather than only every third tick.
+        this.broadcast({
+          type: "missing_data",
+          timestamp: timestamp.toISOString(),
+        });
         return;
       }
 
