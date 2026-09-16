@@ -20,6 +20,13 @@ export type SimulatorStatusValue =
   | "STOPPED"
   | "ERROR";
 
+export type PhysicalDeviceStatus = {
+  deviceId: string;
+  rssi: number | null;
+  lastSeen: string;
+  online: boolean;
+};
+
 type SensorReadingInput = {
   timestamp: Date;
   temperature: number;
@@ -32,12 +39,17 @@ type PhysicalSensorReadingInput = {
   temperature: number;
   humidity: number;
   pressure: null;
+  deviceId: string;
+  rssi: number | null;
 };
 
 type BroadcastMessage =
   | { type: "reading"; reading: SensorReading }
   | { type: "status"; status: Awaited<ReturnType<SkyguardSimulator["getStatus"]>> }
   | { type: "missing_data"; timestamp: string };
+
+const PHYSICAL_DEVICE_OFFLINE_MS = 15_000;
+let physicalDevice: PhysicalDeviceStatus | null = null;
 
 const modeMetadata: Record<
   Exclude<SimulatorModeValue, "NORMAL">,
@@ -145,13 +157,17 @@ export function validatePhysicalSensorReading(
     !Number.isFinite(reading.temperature) ||
     typeof reading.humidity !== "number" ||
     !Number.isFinite(reading.humidity) ||
-    (reading.pressure !== null && reading.pressure !== undefined)
+    (reading.pressure !== null && reading.pressure !== undefined) ||
+    (reading.device_id !== undefined && typeof reading.device_id !== "string") ||
+    (reading.rssi !== undefined && (typeof reading.rssi !== "number" || !Number.isFinite(reading.rssi)))
   ) {
     throw new Error("Physical reading must contain temperature, humidity, and pressure: null; timestamp is optional");
   }
 
   const temperature = reading.temperature;
   const humidity = reading.humidity;
+  const deviceId = typeof reading.device_id === "string" && reading.device_id.trim() ? reading.device_id.trim() : "ESP32-001";
+  const rssi = typeof reading.rssi === "number" ? reading.rssi : null;
 
   if (temperature < -80 || temperature > 70) {
     throw new Error("Temperature is outside physical sanity limits");
@@ -159,8 +175,11 @@ export function validatePhysicalSensorReading(
   if (humidity < 0 || humidity > 100) {
     throw new Error("Humidity is outside physical sanity limits");
   }
+  if (rssi !== null && (rssi < -120 || rssi > 0)) {
+    throw new Error("Wi-Fi RSSI is outside expected limits");
+  }
 
-  return { timestamp, temperature, humidity, pressure: null };
+  return { timestamp, temperature, humidity, pressure: null, deviceId, rssi };
 }
 
 export class SkyguardSimulator {
@@ -191,6 +210,15 @@ export class SkyguardSimulator {
 
   getClientCount() {
     return this.clients.size;
+  }
+
+  getPhysicalDeviceStatus(): PhysicalDeviceStatus | null {
+    if (!physicalDevice) return null;
+    const lastSeenMs = new Date(physicalDevice.lastSeen).getTime();
+    return {
+      ...physicalDevice,
+      online: Date.now() - lastSeenMs <= PHYSICAL_DEVICE_OFFLINE_MS,
+    };
   }
 
   async getHistory(limit = 60) {
@@ -339,7 +367,12 @@ export class SkyguardSimulator {
     const reading = validatePhysicalSensorReading(candidate);
     const [stored] = await db
       .insert(sensorReadingsTable)
-      .values(reading)
+      .values({
+        timestamp: reading.timestamp,
+        temperature: reading.temperature,
+        humidity: reading.humidity,
+        pressure: null,
+      })
       .onConflictDoNothing({
         target: sensorReadingsTable.timestamp,
       })
@@ -348,6 +381,13 @@ export class SkyguardSimulator {
     if (!stored) {
       throw new Error("Duplicate sensor reading timestamp");
     }
+
+    physicalDevice = {
+      deviceId: reading.deviceId,
+      rssi: reading.rssi,
+      lastSeen: reading.timestamp.toISOString(),
+      online: true,
+    };
 
     this.broadcast({ type: "reading", reading: stored });
     return stored;
@@ -441,11 +481,10 @@ export class SkyguardSimulator {
       return;
     }
 
+    const endTimestamp = this.activeEventLastTimestamp ?? new Date();
     await db
       .update(simulatorEventsTable)
-      .set({
-        endTimestamp: this.activeEventLastTimestamp ?? new Date(),
-      })
+      .set({ endTimestamp })
       .where(eq(simulatorEventsTable.id, this.activeEventId));
     this.activeEventId = null;
     this.activeEventLastTimestamp = null;
@@ -464,6 +503,7 @@ export class SkyguardSimulator {
           faultType: metadata.faultType,
           affectedVariable: metadata.affectedVariable,
           startTimestamp: timestamp,
+          endTimestamp: null,
         })
         .returning({ id: simulatorEventsTable.id });
       this.activeEventId = event?.id ?? null;
@@ -475,19 +515,17 @@ export class SkyguardSimulator {
   private async sendStatus(client: WebSocket) {
     try {
       const status = await this.getStatus();
-      if (client.readyState === WebSocket.OPEN) {
-        client.send(JSON.stringify({ type: "status", status }));
-      }
+      client.send(JSON.stringify({ type: "status", status }));
     } catch (error) {
-      logger.warn({ err: error }, "Unable to send SkyGuard client status");
+      logger.error({ err: error }, "Failed to send SkyGuard status");
     }
   }
 
   private broadcast(message: BroadcastMessage) {
-    const payload = JSON.stringify(message);
+    const serialized = JSON.stringify(message);
     for (const client of this.clients) {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(payload);
+        client.send(serialized);
       }
     }
   }
