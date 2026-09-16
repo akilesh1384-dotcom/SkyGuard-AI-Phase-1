@@ -10,13 +10,14 @@ from .data_client import SkyGuardDataClient, reading_is_faulty
 from .ml_placeholders import (
     FeatureEngineer,
     MlDetector,
-    ScoreFusion,
     StatisticalDetector,
     SensorDiagnosticDetector,
 )
 from .calibrated_multivariate import CalibratedMultivariateDetector
 from .calibrated_fusion import CalibratedScoreFusion
 from .alert_state import AlertStateManager
+from .aws_analysis import AwsAnalysisEngine
+from .sensor_mode import SensorMode
 from .models import (
     AnalyzeResponse,
     AnomalyResult,
@@ -37,28 +38,14 @@ logger = logging.getLogger(__name__)
 def calculate_metrics(truth: Sequence[bool], predictions: Sequence[bool]) -> EvaluationMetrics:
     if len(truth) != len(predictions):
         raise ValueError("Truth and prediction sequences must have the same length")
-    true_positives = sum(actual and predicted for actual, predicted in zip(truth, predictions))
-    false_positives = sum(not actual and predicted for actual, predicted in zip(truth, predictions))
-    true_negatives = sum(not actual and not predicted for actual, predicted in zip(truth, predictions))
-    false_negatives = sum(actual and not predicted for actual, predicted in zip(truth, predictions))
-    precision_denominator = true_positives + false_positives
-    recall_denominator = true_positives + false_negatives
-    precision = true_positives / precision_denominator if precision_denominator else None
-    recall = true_positives / recall_denominator if recall_denominator else None
-    f1_score = (
-        2 * precision * recall / (precision + recall)
-        if precision is not None and recall is not None and precision + recall
-        else None
-    )
-    return EvaluationMetrics(
-        true_positives=true_positives,
-        false_positives=false_positives,
-        true_negatives=true_negatives,
-        false_negatives=false_negatives,
-        precision=precision,
-        recall=recall,
-        f1_score=f1_score,
-    )
+    tp = sum(actual and predicted for actual, predicted in zip(truth, predictions))
+    fp = sum(not actual and predicted for actual, predicted in zip(truth, predictions))
+    tn = sum(not actual and not predicted for actual, predicted in zip(truth, predictions))
+    fn = sum(actual and not predicted for actual, predicted in zip(truth, predictions))
+    precision = tp / (tp + fp) if tp + fp else None
+    recall = tp / (tp + fn) if tp + fn else None
+    f1 = 2 * precision * recall / (precision + recall) if precision is not None and recall is not None and precision + recall else None
+    return EvaluationMetrics(true_positives=tp, false_positives=fp, true_negatives=tn, false_negatives=fn, precision=precision, recall=recall, f1_score=f1)
 
 
 def calculate_event_latencies(events: Sequence[GroundTruthEvent], results: Sequence[AnomalyResult]) -> list[EventLatency]:
@@ -66,70 +53,37 @@ def calculate_event_latencies(events: Sequence[GroundTruthEvent], results: Seque
     latencies: list[EventLatency] = []
     for event in sorted(events, key=lambda item: item.start_timestamp):
         if event.fault_type == "MISSING_DATA":
-            first_after_gap = next(
-                (
-                    result for result in ordered_results
-                    if result.timestamp >= (event.end_timestamp if event.end_timestamp is not None else event.start_timestamp)
-                    and result.is_anomaly
-                    and (result.fault_type == "MISSING_DATA" or "missing_data" in result.reasons)
-                ),
-                None,
-            )
-            first_normal_after_event = None
-            if event.end_timestamp is not None:
-                first_normal_after_event = next(
-                    (result for result in ordered_results if result.timestamp > event.end_timestamp and not result.is_anomaly),
-                    None,
-                )
+            first = next((r for r in ordered_results if r.timestamp >= (event.end_timestamp or event.start_timestamp) and r.is_anomaly and (r.fault_type == "MISSING_DATA" or "missing_data" in r.reasons)), None)
         else:
-            in_event = [
-                result for result in ordered_results
-                if result.timestamp >= event.start_timestamp
-                and (event.end_timestamp is None or result.timestamp <= event.end_timestamp)
-            ]
-            first_after_gap = next((result for result in in_event if result.is_anomaly), None)
-            first_normal_after_event = None
-            if event.end_timestamp is not None:
-                first_normal_after_event = next(
-                    (result for result in ordered_results if result.timestamp > event.end_timestamp and not result.is_anomaly),
-                    None,
-                )
-        detection_latency = (
-            (first_after_gap.timestamp - event.start_timestamp).total_seconds()
-            if first_after_gap else None
-        )
-        recovery_latency = (
-            (first_normal_after_event.timestamp - event.end_timestamp).total_seconds()
-            if first_normal_after_event and event.end_timestamp else None
-        )
+            first = next((r for r in ordered_results if r.timestamp >= event.start_timestamp and (event.end_timestamp is None or r.timestamp <= event.end_timestamp) and r.is_anomaly), None)
+        normal = next((r for r in ordered_results if event.end_timestamp and r.timestamp > event.end_timestamp and not r.is_anomaly), None)
         latencies.append(EventLatency(
             fault_type=event.fault_type,
             affected_variable=event.affected_variable,
             start_timestamp=event.start_timestamp,
             end_timestamp=event.end_timestamp,
-            detection_latency_seconds=detection_latency,
-            recovery_latency_seconds=recovery_latency,
+            detection_latency_seconds=(first.timestamp - event.start_timestamp).total_seconds() if first else None,
+            recovery_latency_seconds=(normal.timestamp - event.end_timestamp).total_seconds() if normal and event.end_timestamp else None,
         ))
     return latencies
 
 
 def calculate_event_metrics(events: Sequence[GroundTruthEvent], latencies: Sequence[EventLatency]) -> dict[str, EventDetectionMetrics]:
-    latency_by_key = {(item.fault_type, item.start_timestamp): item for item in latencies}
+    by_key = {(item.fault_type, item.start_timestamp): item for item in latencies}
     output: dict[str, EventDetectionMetrics] = {}
     for fault_type in sorted({event.fault_type for event in events}):
         fault_events = [event for event in events if event.fault_type == fault_type]
-        fault_latencies = [latency_by_key[(event.fault_type, event.start_timestamp)] for event in fault_events]
-        detected = [item for item in fault_latencies if item.detection_latency_seconds is not None]
-        recovered = [item for item in fault_latencies if item.recovery_latency_seconds is not None]
-        total = len(fault_events)
-        detected_count = len(detected)
+        items = [by_key[(event.fault_type, event.start_timestamp)] for event in fault_events]
+        detected = [item for item in items if item.detection_latency_seconds is not None]
+        recovered = [item for item in items if item.recovery_latency_seconds is not None]
+        total = len(items)
         output[fault_type] = EventDetectionMetrics(
             total_events=total,
-            detected_events=detected_count,
-            missed_events=total - detected_count,
-            detection_rate=detected_count / total if total else None,
-            mean_detection_latency_seconds=sum(item.detection_latency_seconds for item in detected) / detected_count if detected_count else None,
-            mean_recovery_latency_seconds=sum(item.recovery_latency_seconds for item in recovered) / len(recovered) if recovered else None,
+            detected_events=len(detected),
+            missed_events=total - len(detected),
+            detection_rate=len(detected) / total if total else None,
+            mean_detection_latency_seconds=sum(i.detection_latency_seconds for i in detected) / len(detected) if detected else None,
+            mean_recovery_latency_seconds=sum(i.recovery_latency_seconds for i in recovered) / len(recovered) if recovered else None,
         )
     return output
 
@@ -145,11 +99,16 @@ class AnalysisEngine:
         self.baseline = Baseline((), settings.baseline_size)
         self.last_error: str | None = None
 
+    @staticmethod
+    def normalize_mode(sensor_mode: str | None) -> SensorMode:
+        try:
+            return SensorMode((sensor_mode or SensorMode.FULL).upper())
+        except ValueError as error:
+            raise ValueError("sensor_mode must be FULL or AWS") from error
+
     async def refresh(self, limit: int | None = None) -> bool:
         try:
-            readings, events = await asyncio.gather(
-                self.client.fetch_readings(limit), self.client.fetch_ground_truth()
-            )
+            readings, events = await asyncio.gather(self.client.fetch_readings(limit), self.client.fetch_ground_truth())
             self.readings = sorted(readings, key=lambda reading: reading.timestamp)
             self.events = sorted(events, key=lambda event: event.start_timestamp)
             self.baseline = self.baseline_manager.build(self.readings, self.events)
@@ -173,6 +132,7 @@ class AnalysisEngine:
             expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds,
             threshold=self.settings.anomaly_threshold,
         ).detect(features)
+        multivariate_results = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold).fit_and_detect(baseline_features, features) if False else None
         multivariate_detector = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold)
         multivariate_detector.fit(baseline_features)
         multivariate_results = multivariate_detector.detect(features)
@@ -183,6 +143,17 @@ class AnalysisEngine:
         ).fuse(statistical_results, ml_results, diagnostic_results, multivariate_results)
         return AlertStateManager(clear_after_normals=3).apply(fused_results)
 
+    async def get_status(self, sensor_mode: str | None = None) -> MlServiceStatus:
+        mode = self.normalize_mode(sensor_mode)
+        await self.refresh()
+        if mode == SensorMode.AWS:
+            aws = AwsAnalysisEngine(self.settings)
+            aws.refresh(self.readings, self.events)
+            initialized, progress = aws.status()
+            status = "ready" if initialized else "collecting_baseline"
+            return MlServiceStatus(status=status, readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=initialized, baseline_progress=progress, baseline_required=self.settings.baseline_size, sensor_mode=mode.value)
+        return MlServiceStatus(**self.status().model_dump(), sensor_mode=mode.value)
+
     def status(self) -> MlServiceStatus:
         if self.last_error and not self.readings:
             status = "degraded"
@@ -192,86 +163,45 @@ class AnalysisEngine:
             status = "degraded"
         else:
             status = "ready"
-        latest = self.readings[-1].timestamp if self.readings else None
-        return MlServiceStatus(
-            status=status,
-            readings_loaded=len(self.readings),
-            latest_reading_timestamp=latest,
-            baseline_initialized=self.baseline.initialized,
-            baseline_progress=self.baseline.progress,
-            baseline_required=self.baseline.required,
-        )
+        return MlServiceStatus(status=status, readings_loaded=len(self.readings), latest_reading_timestamp=self.readings[-1].timestamp if self.readings else None, baseline_initialized=self.baseline.initialized, baseline_progress=self.baseline.progress, baseline_required=self.baseline.required)
 
-    async def get_status(self) -> MlServiceStatus:
-        await self.refresh()
-        return self.status()
-
-    async def analyze(self, limit: int = 200) -> AnalyzeResponse:
+    async def analyze(self, limit: int = 200, sensor_mode: str | None = None) -> AnalyzeResponse:
+        mode = self.normalize_mode(sensor_mode)
         if not await self.refresh():
             raise RuntimeError(self.last_error or "Unable to load analysis data")
+        if mode == SensorMode.AWS:
+            aws = AwsAnalysisEngine(self.settings)
+            aws.refresh(self.readings, self.events)
+            initialized, progress = aws.status()
+            return AnalyzeResponse(status="ready" if initialized else "collecting_baseline", baseline_progress=progress, baseline_required=self.settings.baseline_size, baseline_initialized=initialized, sensor_mode=mode.value, results=aws.analyze(limit))
         if not self.baseline.initialized:
-            return self._cold_start_response()
+            return AnalyzeResponse(status="collecting_baseline", baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, baseline_initialized=False, sensor_mode=mode.value, results=[])
         all_results = self._run_detectors()
-        results = all_results[-max(1, limit):]
-        return AnalyzeResponse(
-            status="ready", baseline_progress=self.baseline.progress,
-            baseline_required=self.baseline.required, baseline_initialized=True,
-            results=results,
-        )
+        return AnalyzeResponse(status="ready", baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, baseline_initialized=True, sensor_mode=mode.value, results=all_results[-max(1, limit):])
 
-    async def evaluate(self) -> EvaluationResponse:
+    async def evaluate(self, sensor_mode: str | None = None) -> EvaluationResponse:
+        mode = self.normalize_mode(sensor_mode)
         if not await self.refresh():
             raise RuntimeError(self.last_error or "Unable to load evaluation data")
+        if mode == SensorMode.AWS:
+            aws = AwsAnalysisEngine(self.settings)
+            aws.refresh(self.readings, self.events)
+            initialized, progress = aws.status()
+            return EvaluationResponse(status="ready" if initialized else "insufficient_labeled_data", message=None if initialized else "At least 60 valid readings are required before AWS-mode evaluation can run.", baseline_progress=progress, baseline_required=self.settings.baseline_size, baseline_initialized=initialized, sensor_mode=mode.value, total_readings=len(self.readings), evaluated_readings=0, labeled_readings=0)
         if not self.events:
-            return EvaluationResponse(
-                status="insufficient_labeled_data", message="No simulator ground-truth events are available.",
-                baseline_progress=self.baseline.progress, baseline_required=self.baseline.required,
-                baseline_initialized=self.baseline.initialized, total_readings=len(self.readings),
-                evaluated_readings=0, labeled_readings=0,
-            )
+            return EvaluationResponse(status="insufficient_labeled_data", message="No simulator ground-truth events are available.", baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, baseline_initialized=self.baseline.initialized, sensor_mode=mode.value, total_readings=len(self.readings), evaluated_readings=0, labeled_readings=0)
         if not self.baseline.initialized:
-            return EvaluationResponse(
-                status="insufficient_labeled_data",
-                message="At least 60 valid normal readings are required before evaluation can run.",
-                baseline_progress=self.baseline.progress, baseline_required=self.baseline.required,
-                baseline_initialized=False, total_readings=len(self.readings), evaluated_readings=0, labeled_readings=0,
-            )
+            return EvaluationResponse(status="insufficient_labeled_data", message="At least 60 valid normal readings are required before evaluation can run.", baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, baseline_initialized=False, sensor_mode=mode.value, total_readings=len(self.readings), evaluated_readings=0, labeled_readings=0)
         results = self._run_detectors()
         result_by_timestamp = {result.timestamp: result for result in results}
-        scored_readings = [reading for reading in self.readings if reading.timestamp in result_by_timestamp]
-        if not scored_readings:
-            return EvaluationResponse(
-                status="insufficient_labeled_data", message="No readings have enough causal history to evaluate.",
-                baseline_progress=self.baseline.progress, baseline_required=self.baseline.required,
-                baseline_initialized=True, total_readings=len(self.readings), evaluated_readings=0, labeled_readings=0,
-            )
-        predictions = [result_by_timestamp[reading.timestamp].is_anomaly for reading in scored_readings]
-        truth = [reading_is_faulty(reading, self.events) for reading in scored_readings]
-        metrics = calculate_metrics(truth, predictions)
-        event_latencies = calculate_event_latencies(self.events, results)
-        event_metrics_by_fault_type = calculate_event_metrics(self.events, event_latencies)
-        by_fault_type = {}
-        for fault_type in sorted({event.fault_type for event in self.events}):
-            type_truth = [reading_is_faulty(reading, self.events, fault_type) for reading in scored_readings]
-            if sum(type_truth) > 0 and len(type_truth) >= 2:
-                by_fault_type[fault_type] = calculate_metrics(type_truth, predictions)
-        return EvaluationResponse(
-            status="ready", baseline_progress=self.baseline.progress,
-            baseline_required=self.baseline.required, baseline_initialized=True,
-            total_readings=len(self.readings), evaluated_readings=len(scored_readings),
-            labeled_readings=len(scored_readings), metrics=metrics, by_fault_type=by_fault_type,
-            event_metrics_by_fault_type=event_metrics_by_fault_type, event_latencies=event_latencies,
-        )
-
-    def _cold_start_response(self) -> AnalyzeResponse:
-        return AnalyzeResponse(
-            status="collecting_baseline", baseline_progress=self.baseline.progress,
-            baseline_required=self.baseline.required, baseline_initialized=False, results=[],
-        )
+        scored = [reading for reading in self.readings if reading.timestamp in result_by_timestamp]
+        predictions = [result_by_timestamp[r.timestamp].is_anomaly for r in scored]
+        truth = [reading_is_faulty(r, self.events) for r in scored]
+        latencies = calculate_event_latencies(self.events, results)
+        return EvaluationResponse(status="ready", baseline_progress=self.baseline.progress, baseline_required=self.baseline.required, baseline_initialized=True, sensor_mode=mode.value, total_readings=len(self.readings), evaluated_readings=len(scored), labeled_readings=len(scored), metrics=calculate_metrics(truth, predictions), event_metrics_by_fault_type=calculate_event_metrics(self.events, latencies), event_latencies=latencies)
 
     def _engineered_features(self) -> list[EngineeredFeatures]:
-        fault_flags = [reading_is_faulty(reading, self.events) for reading in self.readings]
-        return self.feature_engineer.transform(self.readings, fault_flags)
+        return self.feature_engineer.transform(self.readings, [reading_is_faulty(r, self.events) for r in self.readings])
 
     def _baseline_features(self, _features: Sequence[EngineeredFeatures]) -> list[EngineeredFeatures]:
         baseline_features = self.feature_engineer.transform(self.baseline.readings)
