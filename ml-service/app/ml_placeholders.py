@@ -175,7 +175,6 @@ class FeatureEngineer:
         else:
             scale = cls._safe_std(values)
 
-        # Prevent division by zero for perfectly constant windows.
         if scale <= 1e-9:
             scale = 1e-9
 
@@ -194,33 +193,21 @@ class FeatureEngineer:
         history: Sequence[SensorReading],
         events: Sequence[GroundTruthEvent | bool],
     ) -> bool:
-        """
-        Determine whether the causal history contains known-fault data.
-
-        The existing analysis pipeline may pass boolean fault flags rather than
-        GroundTruthEvent objects, so support both representations.
-        """
         if not history or not events:
             return False
 
-        # Existing analysis.py may already provide one boolean per reading.
         if all(isinstance(event, bool) for event in events):
-            # The caller's flags correspond to the full reading sequence.
-            # We only need to know whether any historical position is faulty.
             history_count = len(history)
             if len(events) >= history_count:
                 return any(events[-history_count:])
             return any(events)
 
-        # Normal GroundTruthEvent path.
         for reading in history:
             for event in events:
                 if not isinstance(event, GroundTruthEvent):
                     continue
-
                 if reading.timestamp < event.start_timestamp:
                     continue
-
                 if (
                     event.end_timestamp is None
                     or reading.timestamp <= event.end_timestamp
@@ -263,13 +250,11 @@ class StatisticalDetector:
                 key=lambda item: item[1],
             )
 
-            # Convert robust z-score into [0, 1].
             deviation_score = float(
                 np.clip(max_deviation / 6.0, 0.0, 1.0)
             )
 
             change_scores: dict[str, float] = {}
-
             change_scores["temperature_change"] = self._change_score(
                 row.temperature_delta,
                 row.temperature_rolling_std,
@@ -297,10 +282,8 @@ class StatisticalDetector:
             )
 
             reasons: list[str] = []
-
             if deviation_score >= 0.75:
                 reasons.append(max_variable)
-
             if max_change_score >= 0.75:
                 reasons.append(max_change_name)
 
@@ -364,11 +347,8 @@ class MlDetector:
             [feature.vector() for feature in usable],
             dtype=float,
         )
-
         self.model.fit(matrix)
-
         decisions = self.model.decision_function(matrix)
-
         self._baseline_min = float(np.min(decisions))
         self._baseline_max = float(np.max(decisions))
 
@@ -385,13 +365,7 @@ class MlDetector:
             raise RuntimeError("Isolation Forest has not been fitted.")
 
         results: list[DetectorResult] = []
-
-        scoreable = [
-            feature
-            for feature in features
-            if feature.valid_for_scoring
-        ]
-
+        scoreable = [feature for feature in features if feature.valid_for_scoring]
         if not scoreable:
             return results
 
@@ -399,22 +373,17 @@ class MlDetector:
             [feature.vector() for feature in scoreable],
             dtype=float,
         )
-
         decisions = self.model.decision_function(matrix)
 
         for feature, decision in zip(scoreable, decisions):
             score = float(
                 np.clip(
                     (self._baseline_max - float(decision))
-                    / (
-                        self._baseline_max
-                        - self._baseline_min
-                    ),
+                    / (self._baseline_max - self._baseline_min),
                     0.0,
                     1.0,
                 )
             )
-
             results.append(
                 DetectorResult(
                     timestamp=feature.timestamp,
@@ -429,6 +398,7 @@ class MlDetector:
             )
 
         return results
+
 
 class MultivariateDetector:
     """Detect unusual joint temperature/humidity/pressure behavior."""
@@ -481,30 +451,15 @@ class MultivariateDetector:
         )
 
         self.mean_ = np.mean(matrix, axis=0)
-
-        covariance = np.cov(
-            matrix,
-            rowvar=False,
-        )
-
-        # Small regularization for numerical stability.
+        covariance = np.cov(matrix, rowvar=False)
         covariance += np.eye(covariance.shape[0]) * 1e-6
-
         self.cov_inv_ = np.linalg.pinv(covariance)
 
         distances = np.asarray(
-            [
-                self._distance(row)
-                for row in matrix
-            ],
+            [self._distance(row) for row in matrix],
             dtype=float,
         )
-
-        self.scale_ = max(
-            float(np.percentile(distances, 99)),
-            1e-6,
-        )
-
+        self.scale_ = max(float(np.percentile(distances, 99)), 1e-6)
         self._fitted = True
 
     def detect(
@@ -512,12 +467,9 @@ class MultivariateDetector:
         features: Sequence[EngineeredFeatures],
     ) -> list[DetectorResult]:
         if not self._fitted:
-            raise RuntimeError(
-                "Multivariate detector has not been fitted."
-            )
+            raise RuntimeError("Multivariate detector has not been fitted.")
 
         results: list[DetectorResult] = []
-
         for feature in features:
             if not feature.valid_for_scoring:
                 continue
@@ -533,23 +485,13 @@ class MultivariateDetector:
                 ],
                 dtype=float,
             )
-
             distance = self._distance(row)
-
-            score = float(
-                np.clip(
-                    distance / self.scale_,
-                    0.0,
-                    1.0,
-                )
-            )
-
+            score = float(np.clip(distance / self.scale_, 0.0, 1.0))
             reasons = (
                 ("multivariate_inconsistency",)
                 if score >= self.threshold
                 else ()
             )
-
             results.append(
                 DetectorResult(
                     timestamp=feature.timestamp,
@@ -561,17 +503,11 @@ class MultivariateDetector:
 
         return results
 
-    def _distance(
-        self,
-        row: np.ndarray,
-    ) -> float:
+    def _distance(self, row: np.ndarray) -> float:
         if self.mean_ is None or self.cov_inv_ is None:
-            raise RuntimeError(
-                "Multivariate detector is not fitted."
-            )
+            raise RuntimeError("Multivariate detector is not fitted.")
 
         delta = row - self.mean_
-
         return float(
             np.sqrt(
                 max(
@@ -580,6 +516,7 @@ class MultivariateDetector:
                 )
             )
         )
+
 
 class SensorDiagnosticDetector:
     """Detect sequence-based sensor faults missed by pointwise ML models."""
@@ -603,12 +540,7 @@ class SensorDiagnosticDetector:
         features: Sequence[EngineeredFeatures],
     ) -> list[DiagnosticResult]:
         results: list[DiagnosticResult] = []
-
-        frozen_counts = {
-            "temperature": 0,
-            "humidity": 0,
-            "pressure": 0,
-        }
+        frozen_counts = {"temperature": 0, "humidity": 0, "pressure": 0}
 
         for index, feature in enumerate(features):
             reasons: list[str] = []
@@ -616,147 +548,76 @@ class SensorDiagnosticDetector:
             affected_variable: str | None = None
             diagnostic_score = 0.0
 
-            # ---------------------------------------------------------
-            # 1. Missing / delayed data
-            # ---------------------------------------------------------
             if index > 0:
                 previous = features[index - 1]
-                gap = (
-                    feature.timestamp - previous.timestamp
-                ).total_seconds()
-
+                gap = (feature.timestamp - previous.timestamp).total_seconds()
                 if gap > self.expected_interval_seconds * 1.5:
                     diagnostic_score = 1.0
                     fault_type = "MISSING_DATA"
                     affected_variable = "all"
-                    reasons.append(
-                        f"timestamp gap of {gap:.2f} seconds detected"
-                    )
+                    reasons.append(f"timestamp gap of {gap:.2f} seconds detected")
 
-            # ---------------------------------------------------------
-            # 2. Frozen sensor
-            # ---------------------------------------------------------
             if feature.valid_for_scoring:
                 deltas = {
                     "temperature": feature.temperature_delta,
                     "humidity": feature.humidity_delta,
                     "pressure": feature.pressure_delta,
                 }
-
                 frozen_variables: list[str] = []
-
                 for variable, delta in deltas.items():
-                    if (
-                        delta is not None
-                        and abs(delta) <= self.frozen_tolerance
-                    ):
+                    if delta is not None and abs(delta) <= self.frozen_tolerance:
                         frozen_counts[variable] += 1
                     else:
                         frozen_counts[variable] = 0
-
-                    if (
-                        frozen_counts[variable]
-                        >= self.frozen_consecutive
-                    ):
+                    if frozen_counts[variable] >= self.frozen_consecutive:
                         frozen_variables.append(variable)
 
                 if frozen_variables:
-                    diagnostic_score = max(
-                        diagnostic_score,
-                        1.0,
-                    )
+                    diagnostic_score = max(diagnostic_score, 1.0)
                     fault_type = "FROZEN_SENSOR"
                     affected_variable = ",".join(frozen_variables)
-
                     for variable in frozen_variables:
                         reasons.append(
                             f"{variable} unchanged for "
                             f"{frozen_counts[variable]} consecutive readings"
                         )
 
-            # ---------------------------------------------------------
-            # 3. Gradual drift
-            # ---------------------------------------------------------
-            if (
-                fault_type is None
-                and index >= self.drift_window - 1
-            ):
+            if fault_type is None and index >= self.drift_window - 1:
                 window = [
                     item
-                    for item in features[
-                        index - self.drift_window + 1 : index + 1
-                    ]
+                    for item in features[index - self.drift_window + 1 : index + 1]
                     if item.valid_for_scoring
                 ]
-
                 if len(window) == self.drift_window:
-                    for variable in (
-                        "temperature",
-                        "humidity",
-                        "pressure",
-                    ):
+                    for variable in ("temperature", "humidity", "pressure"):
                         values = np.asarray(
-                            [
-                                float(getattr(item, variable))
-                                for item in window
-                            ],
+                            [float(getattr(item, variable)) for item in window],
                             dtype=float,
                         )
-
-                        x = np.arange(
-                            len(values),
-                            dtype=float,
-                        )
-
-                        slope, intercept = np.polyfit(
-                            x,
-                            values,
-                            1,
-                        )
-
+                        x = np.arange(len(values), dtype=float)
+                        slope, intercept = np.polyfit(x, values, 1)
                         fitted = slope * x + intercept
-                        residual_std = float(
-                            np.std(values - fitted)
-                        )
-
+                        residual_std = float(np.std(values - fitted))
                         if residual_std <= 1e-9:
                             continue
-
                         drift_ratio = abs(slope) / residual_std
-
                         if drift_ratio >= 3.0:
                             diagnostic_score = max(
                                 diagnostic_score,
-                                float(
-                                    np.clip(
-                                        drift_ratio / 6.0,
-                                        0.0,
-                                        1.0,
-                                    )
-                                ),
+                                float(np.clip(drift_ratio / 6.0, 0.0, 1.0)),
                             )
                             fault_type = "GRADUAL_DRIFT"
                             affected_variable = variable
                             reasons.append(
-                                f"{variable} shows persistent "
-                                f"directional drift"
+                                f"{variable} shows persistent directional drift"
                             )
                             break
 
-            diagnostic_anomaly = (
-                diagnostic_score >= self.threshold
-            )
-
+            diagnostic_anomaly = diagnostic_score >= self.threshold
             results.append(
                 DiagnosticResult(
                     timestamp=feature.timestamp,
-                    diagnostic_score=float(
-                        np.clip(
-                            diagnostic_score,
-                            0.0,
-                            1.0,
-                        )
-                    ),
+                    diagnostic_score=float(np.clip(diagnostic_score, 0.0, 1.0)),
                     diagnostic_anomaly=diagnostic_anomaly,
                     fault_type=fault_type,
                     affected_variable=affected_variable,
@@ -768,7 +629,7 @@ class SensorDiagnosticDetector:
 
 
 class ScoreFusion:
-    """Fuse statistical, ML, and diagnostic anomaly signals."""
+    """Fuse statistical, ML, diagnostic, and multivariate anomaly signals."""
 
     def __init__(
         self,
@@ -776,13 +637,8 @@ class ScoreFusion:
         ml_weight: float = 0.55,
         threshold: float = 0.75,
     ):
-        if abs(
-            statistical_weight + ml_weight - 1.0
-        ) > 1e-9:
-            raise ValueError(
-                "Statistical and ML weights must sum to 1.0."
-            )
-
+        if abs(statistical_weight + ml_weight - 1.0) > 1e-9:
+            raise ValueError("Statistical and ML weights must sum to 1.0.")
         self.statistical_weight = statistical_weight
         self.ml_weight = ml_weight
         self.threshold = threshold
@@ -792,50 +648,33 @@ class ScoreFusion:
         statistical_scores: Sequence[DetectorResult],
         ml_scores: Sequence[DetectorResult],
         diagnostic_scores: Sequence[DiagnosticResult] | None = None,
+        multivariate_scores: Sequence[DetectorResult] | None = None,
     ) -> list[AnomalyResult]:
-
-        statistical_map = {
+        statistical_map = {item.timestamp: item for item in statistical_scores}
+        ml_map = {item.timestamp: item for item in ml_scores}
+        diagnostic_map = {item.timestamp: item for item in (diagnostic_scores or [])}
+        multivariate_map = {
             item.timestamp: item
-            for item in statistical_scores
-        }
-
-        ml_map = {
-            item.timestamp: item
-            for item in ml_scores
-        }
-
-        diagnostic_map = {
-            item.timestamp: item
-            for item in (diagnostic_scores or [])
+            for item in (multivariate_scores or [])
         }
 
         timestamps = sorted(
             set(statistical_map)
             | set(ml_map)
             | set(diagnostic_map)
+            | set(multivariate_map)
         )
 
         results: list[AnomalyResult] = []
-
         for timestamp in timestamps:
             statistical = statistical_map.get(
                 timestamp,
-                DetectorResult(
-                    timestamp=timestamp,
-                    score=0.0,
-                    is_anomaly=False,
-                ),
+                DetectorResult(timestamp=timestamp, score=0.0, is_anomaly=False),
             )
-
             ml = ml_map.get(
                 timestamp,
-                DetectorResult(
-                    timestamp=timestamp,
-                    score=0.0,
-                    is_anomaly=False,
-                ),
+                DetectorResult(timestamp=timestamp, score=0.0, is_anomaly=False),
             )
-
             diagnostic = diagnostic_map.get(
                 timestamp,
                 DiagnosticResult(
@@ -846,29 +685,36 @@ class ScoreFusion:
                     affected_variable=None,
                 ),
             )
+            multivariate = multivariate_map.get(
+                timestamp,
+                DetectorResult(timestamp=timestamp, score=0.0, is_anomaly=False),
+            )
 
             context_score = (
                 self.statistical_weight * statistical.score
                 + self.ml_weight * ml.score
             )
-
             final_score = max(
                 context_score,
                 diagnostic.diagnostic_score,
+                multivariate.score,
             )
 
             reasons = list(statistical.reasons)
-
             for reason in ml.reasons:
                 if reason not in reasons:
                     reasons.append(reason)
-
             for reason in diagnostic.reasons:
+                if reason not in reasons:
+                    reasons.append(reason)
+            for reason in multivariate.reasons:
                 if reason not in reasons:
                     reasons.append(reason)
 
             if diagnostic.fault_type:
                 fault_type = diagnostic.fault_type
+            elif multivariate.is_anomaly:
+                fault_type = "MULTIVARIATE_INCONSISTENCY"
             elif final_score >= self.threshold:
                 fault_type = "UNCLASSIFIED_ANOMALY"
             else:
@@ -877,43 +723,17 @@ class ScoreFusion:
             results.append(
                 AnomalyResult(
                     timestamp=timestamp,
-                    statistical_score=float(
-                        np.clip(
-                            statistical.score,
-                            0.0,
-                            1.0,
-                        )
-                    ),
-                    ml_score=float(
-                        np.clip(
-                            ml.score,
-                            0.0,
-                            1.0,
-                        )
-                    ),
-                    diagnostic_score=float(
-                        np.clip(
-                            diagnostic.diagnostic_score,
-                            0.0,
-                            1.0,
-                        )
-                    ),
-                    final_score=float(
-                        np.clip(
-                            final_score,
-                            0.0,
-                            1.0,
-                        )
-                    ),
-                    is_anomaly=(
-                        final_score >= self.threshold
-                    ),
-                    diagnostic_anomaly=(
-                        diagnostic.diagnostic_anomaly
-                    ),
+                    statistical_score=float(np.clip(statistical.score, 0.0, 1.0)),
+                    ml_score=float(np.clip(ml.score, 0.0, 1.0)),
+                    diagnostic_score=float(np.clip(diagnostic.diagnostic_score, 0.0, 1.0)),
+                    final_score=float(np.clip(final_score, 0.0, 1.0)),
+                    is_anomaly=final_score >= self.threshold,
+                    diagnostic_anomaly=diagnostic.diagnostic_anomaly or multivariate.is_anomaly,
                     fault_type=fault_type,
                     affected_variable=(
                         diagnostic.affected_variable
+                        if diagnostic.affected_variable is not None
+                        else ("temperature,humidity,pressure" if multivariate.is_anomaly else None)
                     ),
                     reasons=reasons,
                 )
