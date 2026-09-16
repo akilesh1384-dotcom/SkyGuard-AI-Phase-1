@@ -205,65 +205,6 @@ class AnalysisEngine:
         multivariate_detector.fit(baseline_features)
         multivariate_results = multivariate_detector.detect(features)
 
-        diagnostic_by_timestamp = {
-            result.timestamp: result
-            for result in diagnostic_results
-        }
-
-        for multivariate in multivariate_results:
-            existing = diagnostic_by_timestamp.get(multivariate.timestamp)
-            multivariate_is_anomaly = multivariate.is_anomaly
-            multivariate_fault = (
-                "MULTIVARIATE_INCONSISTENCY"
-                if multivariate_is_anomaly
-                else None
-            )
-            multivariate_variable = (
-                "temperature,humidity,pressure"
-                if multivariate_is_anomaly
-                else None
-            )
-
-            if existing is None:
-                diagnostic_by_timestamp[multivariate.timestamp] = DiagnosticResult(
-                    timestamp=multivariate.timestamp,
-                    diagnostic_score=float(multivariate.score),
-                    diagnostic_anomaly=multivariate_is_anomaly,
-                    fault_type=multivariate_fault,
-                    affected_variable=multivariate_variable,
-                    reasons=multivariate.reasons,
-                )
-                continue
-
-            combined_reasons = list(existing.reasons)
-            for reason in multivariate.reasons:
-                if reason not in combined_reasons:
-                    combined_reasons.append(reason)
-
-            combined_score = max(
-                existing.diagnostic_score,
-                multivariate.score,
-            )
-            combined_anomaly = (
-                existing.diagnostic_anomaly
-                or multivariate_is_anomaly
-            )
-
-            diagnostic_by_timestamp[multivariate.timestamp] = DiagnosticResult(
-                timestamp=existing.timestamp,
-                diagnostic_score=float(combined_score),
-                diagnostic_anomaly=combined_anomaly,
-                fault_type=(
-                    existing.fault_type
-                    or multivariate_fault
-                ),
-                affected_variable=(
-                    existing.affected_variable
-                    or multivariate_variable
-                ),
-                reasons=tuple(combined_reasons),
-            )
-
         fused_results = ScoreFusion(
             statistical_weight=self.settings.statistical_weight,
             ml_weight=self.settings.ml_weight,
@@ -271,7 +212,8 @@ class AnalysisEngine:
         ).fuse(
             statistical_results,
             ml_results,
-            list(diagnostic_by_timestamp.values()),
+            diagnostic_results,
+            multivariate_results,
         )
 
         return AlertStateManager(
