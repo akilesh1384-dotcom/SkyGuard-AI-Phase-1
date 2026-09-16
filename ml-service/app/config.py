@@ -16,6 +16,9 @@ class Settings:
     rolling_window: int = 20
     baseline_size: int = 60
     anomaly_threshold: float = 0.75
+    multivariate_threshold: float = float(
+        os.getenv("SKYGUARD_MULTIVARIATE_THRESHOLD", "0.95")
+    )
     statistical_weight: float = 0.45
     ml_weight: float = 0.55
     diagnostic_frozen_consecutive: int = int(
