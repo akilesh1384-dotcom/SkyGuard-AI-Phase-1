@@ -1,6 +1,6 @@
 import { asc } from "drizzle-orm";
 import { Router, type IRouter } from "express";
-import { GetLatestReadingResponse, GetMlGroundTruthResponse, GetMlReadingsQueryParams, GetMlReadingsResponse, GetReadingHistoryQueryParams, GetReadingHistoryResponse, GetSimulatorStatusResponse, SetSimulatorModeBody, SetSimulatorModeResponse, StartSimulatorResponse, StopSimulatorResponse, ResetSimulatorResponse, SimulatorMode } from "@workspace/api-zod";
+import { GetLatestReadingResponse, GetMlGroundTruthResponse, GetMlReadingsQueryParams, GetMlReadingsResponse, GetReadingHistoryQueryParams, GetReadingHistoryResponse, GetSimulatorStatusResponse, SetSimulatorModeBody, SetSimulatorModeResponse, StartSimulatorResponse, StopSimulatorResponse, ResetSimulatorResponse } from "@workspace/api-zod";
 import { db, sensorReadingsTable, simulatorEventsTable } from "@workspace/db";
 import { skyguardSimulator, type SimulatorModeValue } from "../lib/skyguard";
 
@@ -59,7 +59,7 @@ router.get("/history", async (req, res): Promise<void> => {
   if (!query.success) { res.status(400).json({ error: query.error.message }); return; }
   const history = await skyguardSimulator.getHistory(query.data.limit);
   res.json(GetReadingHistoryResponse.parse(history));
-});
+  });
 
 router.get("/status", async (_req, res): Promise<void> => { res.json(GetSimulatorStatusResponse.parse(await skyguardSimulator.getStatus())); });
 router.post("/simulator/start", async (_req, res): Promise<void> => { res.json(StartSimulatorResponse.parse(await skyguardSimulator.start())); });
