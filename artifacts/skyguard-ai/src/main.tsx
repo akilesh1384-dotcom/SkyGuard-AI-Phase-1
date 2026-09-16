@@ -4,6 +4,7 @@ import AwsDashboard from './components/aws-dashboard';
 import AiAnalysisPanel from './components/ai-analysis-panel';
 import MissingDataBanner from './components/missing-data-banner';
 import SensorModeControl from './components/sensor-mode-control';
+import DataSourceIndicator from './components/data-source-indicator';
 import { ErrorBoundary } from '@/components/error-boundary';
 import './index.css';
 
@@ -16,6 +17,7 @@ createRoot(document.getElementById('root')!, {
     {sensorMode === 'AWS' ? <AwsDashboard /> : <App />}
     <AiAnalysisPanel />
     <MissingDataBanner />
+    <DataSourceIndicator />
     <SensorModeControl />
   </ErrorBoundary>,
 );
