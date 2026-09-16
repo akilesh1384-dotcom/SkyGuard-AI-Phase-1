@@ -13,6 +13,7 @@ from .ml_placeholders import (
     ScoreFusion,
     StatisticalDetector,
     SensorDiagnosticDetector,
+    MultivariateDetector,
 )
 from .alert_state import AlertStateManager
 from .models import (
@@ -197,7 +198,15 @@ class AnalysisEngine:
             ),
             threshold=self.settings.anomaly_threshold,
         ).detect(features)
+        
+        multivariate_detector = MultivariateDetector(
+            threshold=self.settings.anomaly_threshold,
+        )
 
+        multivariate_detector.fit(baseline_features)
+
+        multivariate_results = multivariate_detector.detect(features)
+        
         fused_results = ScoreFusion(
             statistical_weight=self.settings.statistical_weight,
             ml_weight=self.settings.ml_weight,

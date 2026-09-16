@@ -430,6 +430,156 @@ class MlDetector:
 
         return results
 
+class MultivariateDetector:
+    """Detect unusual joint temperature/humidity/pressure behavior."""
+
+    FEATURE_NAMES = (
+        "temperature",
+        "humidity",
+        "pressure",
+        "temperature_delta",
+        "humidity_delta",
+        "pressure_delta",
+    )
+
+    def __init__(self, threshold: float = 0.75):
+        self.threshold = threshold
+        self.mean_: np.ndarray | None = None
+        self.cov_inv_: np.ndarray | None = None
+        self.scale_: float = 1.0
+        self._fitted = False
+
+    def fit(
+        self,
+        features: Sequence[EngineeredFeatures],
+    ) -> None:
+        usable = [
+            feature
+            for feature in features
+            if feature.valid_for_scoring
+            and not feature.history_contains_fault
+        ]
+
+        if len(usable) < 20:
+            raise ValueError(
+                "At least 20 clean scoreable feature rows are required."
+            )
+
+        matrix = np.asarray(
+            [
+                [
+                    feature.temperature,
+                    feature.humidity,
+                    feature.pressure,
+                    feature.temperature_delta,
+                    feature.humidity_delta,
+                    feature.pressure_delta,
+                ]
+                for feature in usable
+            ],
+            dtype=float,
+        )
+
+        self.mean_ = np.mean(matrix, axis=0)
+
+        covariance = np.cov(
+            matrix,
+            rowvar=False,
+        )
+
+        # Small regularization for numerical stability.
+        covariance += np.eye(covariance.shape[0]) * 1e-6
+
+        self.cov_inv_ = np.linalg.pinv(covariance)
+
+        distances = np.asarray(
+            [
+                self._distance(row)
+                for row in matrix
+            ],
+            dtype=float,
+        )
+
+        self.scale_ = max(
+            float(np.percentile(distances, 99)),
+            1e-6,
+        )
+
+        self._fitted = True
+
+    def detect(
+        self,
+        features: Sequence[EngineeredFeatures],
+    ) -> list[DetectorResult]:
+        if not self._fitted:
+            raise RuntimeError(
+                "Multivariate detector has not been fitted."
+            )
+
+        results: list[DetectorResult] = []
+
+        for feature in features:
+            if not feature.valid_for_scoring:
+                continue
+
+            row = np.asarray(
+                [
+                    feature.temperature,
+                    feature.humidity,
+                    feature.pressure,
+                    feature.temperature_delta,
+                    feature.humidity_delta,
+                    feature.pressure_delta,
+                ],
+                dtype=float,
+            )
+
+            distance = self._distance(row)
+
+            score = float(
+                np.clip(
+                    distance / self.scale_,
+                    0.0,
+                    1.0,
+                )
+            )
+
+            reasons = (
+                ("multivariate_inconsistency",)
+                if score >= self.threshold
+                else ()
+            )
+
+            results.append(
+                DetectorResult(
+                    timestamp=feature.timestamp,
+                    score=score,
+                    is_anomaly=score >= self.threshold,
+                    reasons=reasons,
+                )
+            )
+
+        return results
+
+    def _distance(
+        self,
+        row: np.ndarray,
+    ) -> float:
+        if self.mean_ is None or self.cov_inv_ is None:
+            raise RuntimeError(
+                "Multivariate detector is not fitted."
+            )
+
+        delta = row - self.mean_
+
+        return float(
+            np.sqrt(
+                max(
+                    delta @ self.cov_inv_ @ delta.T,
+                    0.0,
+                )
+            )
+        )
 
 class SensorDiagnosticDetector:
     """Detect sequence-based sensor faults missed by pointwise ML models."""
