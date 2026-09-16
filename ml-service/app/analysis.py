@@ -200,15 +200,11 @@ class AnalysisEngine:
         ).detect(features)
 
         multivariate_detector = MultivariateDetector(
-            threshold=self.settings.anomaly_threshold,
+            threshold=self.settings.multivariate_threshold,
         )
         multivariate_detector.fit(baseline_features)
         multivariate_results = multivariate_detector.detect(features)
 
-        # ScoreFusion already supports one diagnostic signal per timestamp.
-        # Fold the multivariate detector into that diagnostic layer so its score
-        # participates in the existing final-score calculation without changing
-        # the established statistical/ML weights.
         diagnostic_by_timestamp = {
             result.timestamp: result
             for result in diagnostic_results
