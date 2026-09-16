@@ -136,18 +136,18 @@ export function validatePhysicalSensorReading(
   }
 
   const reading = candidate as Record<string, unknown>;
-  const timestamp = new Date(String(reading.timestamp));
+  const rawTimestamp = reading.timestamp;
+  const timestamp = rawTimestamp ? new Date(String(rawTimestamp)) : new Date();
 
   if (
-    !reading.timestamp ||
-    Number.isNaN(timestamp.getTime()) ||
+    (rawTimestamp !== undefined && Number.isNaN(timestamp.getTime())) ||
     typeof reading.temperature !== "number" ||
     !Number.isFinite(reading.temperature) ||
     typeof reading.humidity !== "number" ||
     !Number.isFinite(reading.humidity) ||
     (reading.pressure !== null && reading.pressure !== undefined)
   ) {
-    throw new Error("Physical reading must contain timestamp, temperature, humidity, and pressure: null");
+    throw new Error("Physical reading must contain temperature, humidity, and pressure: null; timestamp is optional");
   }
 
   const temperature = reading.temperature;
