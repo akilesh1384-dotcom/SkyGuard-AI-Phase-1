@@ -7,6 +7,7 @@ import {
   CloudDrizzle,
   Play,
   Radio,
+  RefreshCw,
   Server,
   ShieldCheck,
   Square,
@@ -24,11 +25,7 @@ import {
   useGetReadingHistory,
   useGetSimulatorStatus,
   useHealthCheck,
-  useSetSimulatorMode,
-  useStartSimulator,
-  useStopSimulator,
   type SensorReading,
-  type SimulatorStatus,
 } from '@workspace/api-client-react';
 import '@/index.css';
 
@@ -92,7 +89,7 @@ function MetricCard({
           </div>
           <div className="mt-5 flex items-baseline gap-1.5">
             <span className="reading-number font-display text-[2.65rem] font-semibold leading-none text-foreground">
-              {value == null ? '—' : (value == null ? '—' : value.toFixed(1))}
+              {value == null ? '—' : value.toFixed(1)}
             </span>
             <span className="font-data text-sm text-muted-foreground">{unit}</span>
           </div>
@@ -186,15 +183,49 @@ function AwsDashboardContent() {
   const queryClient = useQueryClient();
   const [connection, setConnection] = useState<'connecting' | 'live' | 'offline'>('connecting');
   const [streamReading, setStreamReading] = useState<SensorReading | null>(null);
+  const [controlBusy, setControlBusy] = useState(false);
+  const [controlError, setControlError] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
 
   const health = useHealthCheck({ query: { queryKey: getHealthCheckQueryKey(), refetchInterval: 30000 } });
   const latest = useGetLatestReading({ query: { queryKey: getGetLatestReadingQueryKey(), refetchInterval: 15000 } });
   const history = useGetReadingHistory(HISTORY_PARAMS, { query: { queryKey: getGetReadingHistoryQueryKey(HISTORY_PARAMS), refetchInterval: 30000 } });
-  const simulator = useGetSimulatorStatus({ query: { queryKey: getGetSimulatorStatusQueryKey(), refetchInterval: 15000 } });
-  const setSimulatorMode = useSetSimulatorMode();
-  const startSimulator = useStartSimulator();
-  const stopSimulator = useStopSimulator();
+  const simulator = useGetSimulatorStatus({ query: { queryKey: getGetSimulatorStatusQueryKey(), refetchInterval: 3000 } });
+
+  const refreshDashboardQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: getGetLatestReadingQueryKey() }),
+      queryClient.invalidateQueries({ queryKey: getGetReadingHistoryQueryKey(HISTORY_PARAMS) }),
+      queryClient.invalidateQueries({ queryKey: getGetSimulatorStatusQueryKey() }),
+    ]);
+  };
+
+  const postControl = async (path: string, body?: unknown) => {
+    setControlBusy(true);
+    setControlError(null);
+    try {
+      const response = await fetch(`/api${path}`, {
+        method: 'POST',
+        headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => null) as { error?: string; detail?: string } | null;
+        throw new Error(payload?.error ?? payload?.detail ?? `Request failed (${response.status})`);
+      }
+      await refreshDashboardQueries();
+    } catch (error) {
+      setControlError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setControlBusy(false);
+    }
+  };
+
+  const handleReset = async () => {
+    if (!window.confirm('Reset the simulator and clear stored telemetry/test events?')) return;
+    setStreamReading(null);
+    await postControl('/simulator/reset');
+  };
 
   useEffect(() => {
     let reconnectTimer: number | undefined;
@@ -318,20 +349,35 @@ function AwsDashboardContent() {
           <AwsHistory readings={readings} />
 
           <section className="sg-panel rounded-[1.15rem] p-5">
-            <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /><h2 className="font-display text-base font-bold">AWS test controls</h2></div>
-            <p className="mt-1 text-xs text-muted-foreground">Pressure-dependent simulator scenarios are hidden while AWS mode is active.</p>
-            <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_auto]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2"><Activity className="h-4 w-4 text-primary" /><h2 className="font-display text-base font-bold">AWS test controls</h2></div>
+                <p className="mt-1 text-xs text-muted-foreground">Pressure-dependent simulator scenarios are hidden while AWS mode is active.</p>
+              </div>
+              <span className="rounded-full border border-border/80 bg-secondary/40 px-2.5 py-1 text-[10px] font-bold uppercase tracking-[0.12em] text-muted-foreground">
+                {simulator.data?.status ?? 'Loading'}
+              </span>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-[1fr_auto_auto_auto]">
               <select
                 value={simulator.data?.mode ?? SimulatorMode.NORMAL}
-                onChange={(event) => setSimulatorMode.mutate({ data: { mode: event.target.value as SimulatorMode } })}
-                disabled={setSimulatorMode.isPending}
-                className="rounded-xl border border-input bg-background px-3 py-3 text-sm font-semibold"
+                onChange={(event) => void postControl('/simulator/mode', { mode: event.target.value })}
+                disabled={controlBusy}
+                className="rounded-xl border border-input bg-background px-3 py-3 text-sm font-semibold disabled:opacity-50"
               >
                 {AWS_SIMULATOR_MODES.map((mode) => <option key={mode} value={mode}>{modeNames[mode]}</option>)}
               </select>
-              <button type="button" onClick={() => startSimulator.mutate()} disabled={startSimulator.isPending || simulator.data?.status === 'SIMULATING'} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground disabled:opacity-45"><Play className="h-3.5 w-3.5 fill-current" />Start</button>
-              <button type="button" onClick={() => stopSimulator.mutate()} disabled={stopSimulator.isPending || simulator.data?.status === 'STOPPED'} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-input px-4 text-xs font-bold disabled:opacity-45"><Square className="h-3.5 w-3.5 fill-current" />Stop</button>
+              <button type="button" onClick={() => void postControl('/simulator/start')} disabled={controlBusy || simulator.data?.status === 'SIMULATING'} className="flex h-11 items-center justify-center gap-2 rounded-xl bg-primary px-4 text-xs font-bold text-primary-foreground disabled:opacity-45"><Play className="h-3.5 w-3.5 fill-current" />Start</button>
+              <button type="button" onClick={() => void postControl('/simulator/stop')} disabled={controlBusy || simulator.data?.status === 'STOPPED'} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-input px-4 text-xs font-bold disabled:opacity-45"><Square className="h-3.5 w-3.5 fill-current" />Stop</button>
+              <button type="button" onClick={() => void handleReset()} disabled={controlBusy} className="flex h-11 items-center justify-center gap-2 rounded-xl border border-destructive/50 px-4 text-xs font-bold text-destructive disabled:opacity-45"><RefreshCw className="h-3.5 w-3.5" />Reset</button>
             </div>
+
+            {controlError ? (
+              <div className="mt-3 rounded-xl border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                {controlError}
+              </div>
+            ) : null}
           </section>
 
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border/60 pb-3 pt-1 text-[10px] uppercase tracking-[0.13em] text-muted-foreground">
