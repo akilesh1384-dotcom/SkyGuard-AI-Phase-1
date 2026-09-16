@@ -21,6 +21,7 @@ from .models import (
     AnomalyResult,
     DiagnosticResult,
     EngineeredFeatures,
+    EventDetectionMetrics,
     EventLatency,
     EvaluationMetrics,
     EvaluationResponse,
@@ -39,7 +40,9 @@ def calculate_metrics(
     if len(truth) != len(predictions):
         raise ValueError("Truth and prediction sequences must have the same length")
 
-    true_positives = sum(actual and predicted for actual, predicted in zip(truth, predictions))
+    true_positives = sum(
+        actual and predicted for actual, predicted in zip(truth, predictions)
+    )
     false_positives = sum(
         not actual and predicted for actual, predicted in zip(truth, predictions)
     )
@@ -85,47 +88,77 @@ def calculate_event_latencies(
     events: Sequence[GroundTruthEvent],
     results: Sequence[AnomalyResult],
 ) -> list[EventLatency]:
-    """Measure first detection and first post-event normal return per event."""
+    """Measure first detection and first post-event normal return per event.
+
+    MISSING_DATA has no sensor rows during the outage by design, so its first
+    detection is evaluated at the first reading after the gap.
+    """
 
     ordered_results = sorted(results, key=lambda result: result.timestamp)
     latencies: list[EventLatency] = []
     for event in sorted(events, key=lambda item: item.start_timestamp):
-        in_event = [
-            result
-            for result in ordered_results
-            if result.timestamp >= event.start_timestamp
-            and (
-                event.end_timestamp is None
-                or result.timestamp <= event.end_timestamp
-            )
-        ]
-        first_detection = next(
-            (result for result in in_event if result.is_anomaly),
-            None,
-        )
-        detection_latency = (
-            (
-                first_detection.timestamp - event.start_timestamp
-            ).total_seconds()
-            if first_detection
-            else None
-        )
-
-        first_normal_after_event = None
-        if event.end_timestamp is not None:
-            first_normal_after_event = next(
+        if event.fault_type == "MISSING_DATA":
+            first_after_gap = next(
                 (
                     result
                     for result in ordered_results
-                    if result.timestamp > event.end_timestamp
-                    and not result.is_anomaly
+                    if result.timestamp >= (
+                        event.end_timestamp
+                        if event.end_timestamp is not None
+                        else event.start_timestamp
+                    )
+                    and result.is_anomaly
+                    and (
+                        result.fault_type == "MISSING_DATA"
+                        or "missing_data" in result.reasons
+                    )
                 ),
                 None,
             )
+            first_normal_after_event = None
+            if event.end_timestamp is not None:
+                first_normal_after_event = next(
+                    (
+                        result
+                        for result in ordered_results
+                        if result.timestamp > event.end_timestamp
+                        and not result.is_anomaly
+                    ),
+                    None,
+                )
+        else:
+            in_event = [
+                result
+                for result in ordered_results
+                if result.timestamp >= event.start_timestamp
+                and (
+                    event.end_timestamp is None
+                    or result.timestamp <= event.end_timestamp
+                )
+            ]
+            first_after_gap = next(
+                (result for result in in_event if result.is_anomaly),
+                None,
+            )
+            first_normal_after_event = None
+            if event.end_timestamp is not None:
+                first_normal_after_event = next(
+                    (
+                        result
+                        for result in ordered_results
+                        if result.timestamp > event.end_timestamp
+                        and not result.is_anomaly
+                    ),
+                    None,
+                )
+
+        detection_latency = (
+            (first_after_gap.timestamp - event.start_timestamp).total_seconds()
+            if first_after_gap
+            else None
+        )
         recovery_latency = (
-            (
-                first_normal_after_event.timestamp - event.end_timestamp
-            ).total_seconds()
+            (first_normal_after_event.timestamp - event.end_timestamp).total_seconds()
             if first_normal_after_event and event.end_timestamp
             else None
         )
@@ -140,6 +173,58 @@ def calculate_event_latencies(
             )
         )
     return latencies
+
+
+def calculate_event_metrics(
+    events: Sequence[GroundTruthEvent],
+    latencies: Sequence[EventLatency],
+) -> dict[str, EventDetectionMetrics]:
+    """Summarize detection at the event level, separate from row metrics."""
+
+    latency_by_key = {
+        (
+            item.fault_type,
+            item.start_timestamp,
+        ): item
+        for item in latencies
+    }
+    output: dict[str, EventDetectionMetrics] = {}
+    fault_types = sorted({event.fault_type for event in events})
+    for fault_type in fault_types:
+        fault_events = [event for event in events if event.fault_type == fault_type]
+        fault_latencies = [
+            latency_by_key[(event.fault_type, event.start_timestamp)]
+            for event in fault_events
+        ]
+        detected = [
+            item
+            for item in fault_latencies
+            if item.detection_latency_seconds is not None
+        ]
+        recovered = [
+            item
+            for item in fault_latencies
+            if item.recovery_latency_seconds is not None
+        ]
+        total = len(fault_events)
+        detected_count = len(detected)
+        output[fault_type] = EventDetectionMetrics(
+            total_events=total,
+            detected_events=detected_count,
+            missed_events=total - detected_count,
+            detection_rate=(detected_count / total if total else None),
+            mean_detection_latency_seconds=(
+                sum(item.detection_latency_seconds for item in detected) / detected_count
+                if detected_count
+                else None
+            ),
+            mean_recovery_latency_seconds=(
+                sum(item.recovery_latency_seconds for item in recovered) / len(recovered)
+                if recovered
+                else None
+            ),
+        )
+    return output
 
 
 class AnalysisEngine:
@@ -332,6 +417,11 @@ class AnalysisEngine:
         ]
         metrics = calculate_metrics(truth, predictions)
         event_latencies = calculate_event_latencies(self.events, results)
+        event_metrics_by_fault_type = calculate_event_metrics(
+            self.events,
+            event_latencies,
+        )
+
         by_fault_type = {}
         for fault_type in sorted({event.fault_type for event in self.events}):
             type_truth = [
@@ -354,6 +444,7 @@ class AnalysisEngine:
             labeled_readings=len(scored_readings),
             metrics=metrics,
             by_fault_type=by_fault_type,
+            event_metrics_by_fault_type=event_metrics_by_fault_type,
             event_latencies=event_latencies,
         )
 
