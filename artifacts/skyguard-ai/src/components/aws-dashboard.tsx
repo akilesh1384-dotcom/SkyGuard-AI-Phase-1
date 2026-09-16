@@ -92,7 +92,7 @@ function MetricCard({
           </div>
           <div className="mt-5 flex items-baseline gap-1.5">
             <span className="reading-number font-display text-[2.65rem] font-semibold leading-none text-foreground">
-              {value == null ? '—' : value.toFixed(1)}
+              {value == null ? '—' : (value == null ? '—' : value.toFixed(1))}
             </span>
             <span className="font-data text-sm text-muted-foreground">{unit}</span>
           </div>
@@ -170,8 +170,8 @@ function AwsHistory({ readings }: { readings: SensorReading[] }) {
             {readings.slice(-20).reverse().map((reading) => (
               <tr key={`${reading.id}-${reading.timestamp}`} className="border-t border-border/60">
                 <td className="px-5 py-3 font-data text-muted-foreground">{formatTime(reading.timestamp)}</td>
-                <td className="px-3 py-3 font-data font-medium text-foreground">{reading.temperature.toFixed(1)} °C</td>
-                <td className="px-3 py-3 font-data font-medium text-foreground">{reading.humidity.toFixed(1)} %</td>
+                <td className="px-3 py-3 font-data font-medium text-foreground">{(reading.temperature == null ? '—' : reading.temperature.toFixed(1))} °C</td>
+                <td className="px-3 py-3 font-data font-medium text-foreground">{(reading.humidity == null ? '—' : reading.humidity.toFixed(1))} %</td>
                 <td className="px-5 py-3 text-right font-data text-[10px] text-muted-foreground">#{reading.id}</td>
               </tr>
             ))}

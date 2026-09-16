@@ -160,7 +160,7 @@ function MetricCard({
           </div>
           <div className="mt-5 flex items-baseline gap-1.5">
             <span className="reading-number font-display text-[2.65rem] font-semibold leading-none text-foreground" data-testid={`text-value-${type}`}>
-              {value === undefined ? '—' : value.toFixed(type === 'pressure' ? 1 : 1)}
+              {value == null ? '—' : (value == null ? '—' : value.toFixed(1))}
             </span>
             <span className="font-data text-sm text-muted-foreground">{unit}</span>
           </div>
@@ -219,7 +219,7 @@ function DashboardChart({
               <Tooltip
                 contentStyle={{ background: 'hsl(201 45% 14%)', border: '1px solid hsl(198 32% 28%)', borderRadius: 10, color: '#eef8f6', fontSize: 11 }}
                 labelStyle={{ color: '#a7c5c8', marginBottom: 4 }}
-                formatter={(value: number) => [`${value.toFixed(1)} ${unit}`, title]}
+                formatter={(value: number) => [`${value == null ? '—' : (value == null ? '—' : value.toFixed(1))} ${unit}`, title]}
               />
               <Line type="monotone" dataKey={dataKey} stroke={color} strokeWidth={2.5} dot={false} activeDot={{ r: 4, fill: color, stroke: '#effbf7', strokeWidth: 2 }} isAnimationActive={false} />
             </LineChart>
@@ -452,9 +452,9 @@ function HistoryTable({ readings, loading, error }: { readings: SensorReading[];
               {rows.map((reading) => (
                 <tr key={`${reading.id}-${reading.timestamp}`} className="border-t border-border/60 transition hover:bg-secondary/30" data-testid={`row-reading-${reading.id}`}>
                   <td className="px-5 py-3 font-data text-muted-foreground md:px-6">{formatTime(reading.timestamp)}</td>
-                  <td className="px-3 py-3 font-data font-medium text-foreground">{reading.temperature.toFixed(1)} °C</td>
-                  <td className="px-3 py-3 font-data font-medium text-foreground">{reading.humidity.toFixed(1)} %</td>
-                  <td className="px-3 py-3 font-data font-medium text-foreground">{reading.pressure.toFixed(1)} hPa</td>
+                  <td className="px-3 py-3 font-data font-medium text-foreground">{(reading.temperature == null ? '—' : reading.temperature.toFixed(1))} °C</td>
+                  <td className="px-3 py-3 font-data font-medium text-foreground">{(reading.humidity == null ? '—' : reading.humidity.toFixed(1))} %</td>
+                  <td className="px-3 py-3 font-data font-medium text-foreground">{reading.pressure == null ? '—' : (reading.pressure == null ? '—' : reading.pressure.toFixed(1))} hPa</td>
                   <td className="px-5 py-3 text-right font-data text-[10px] text-muted-foreground md:px-6">#{reading.id}</td>
                 </tr>
               ))}
