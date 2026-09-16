@@ -31,12 +31,18 @@ class BaselineManager:
         events: Sequence[GroundTruthEvent],
     ) -> Baseline:
         chronological = sorted(readings, key=lambda reading: reading.timestamp)
-        normal_readings = [
-            reading
-            for reading in chronological
-            if not reading_is_faulty(reading, events)
-        ]
+        normal_readings: list[SensorReading] = []
+
+        # The baseline only needs `required` known-normal samples. Stop as soon
+        # as enough are collected instead of scanning the entire history on
+        # every ML refresh.
+        for reading in chronological:
+            if not reading_is_faulty(reading, events):
+                normal_readings.append(reading)
+                if len(normal_readings) >= self.required:
+                    break
+
         return Baseline(
-            readings=tuple(normal_readings[: self.required]),
+            readings=tuple(normal_readings),
             required=self.required,
         )
