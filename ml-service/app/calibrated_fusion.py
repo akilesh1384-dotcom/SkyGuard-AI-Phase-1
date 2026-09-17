@@ -62,8 +62,6 @@ class CalibratedScoreFusion:
                 + self.ml_weight * ml.score
             )
 
-            # Require the contextual model and the multivariate model to agree
-            # before the multivariate signal dominates the final decision.
             combined_context = 0.5 * context_score + 0.5 * multivariate.score
             final_score = max(diagnostic.diagnostic_score, combined_context)
             is_anomaly = final_score >= self.threshold
@@ -106,7 +104,7 @@ class CalibratedScoreFusion:
                     ),
                     fault_type=fault_type,
                     affected_variable=affected_variable,
-                    reasons=tuple(reasons),
+                    reasons=list(reasons),
                     shap_base_value=ml.shap_base_value,
                     shap_contributions=list(ml.shap_contributions),
                 )
