@@ -15,18 +15,19 @@ run = "pnpm --filter @workspace/api-server run dev"
 [services.production]
 
 [services.production.build]
-args = ["pnpm", "--filter", "@workspace/api-server", "run", "build"]
+args = ["bash", "scripts/build-production.sh"]
 
 [services.production.build.env]
 NODE_ENV = "production"
 
 [services.production.run]
-# we don't run through pnpm to make startup faster in production
-args = ["node", "--enable-source-maps", "artifacts/api-server/dist/index.mjs"]
+args = ["bash", "scripts/start-production.sh"]
 
 [services.production.run.env]
 PORT = "8080"
 NODE_ENV = "production"
+ML_SERVICE_URL = "http://127.0.0.1:8001"
+SKYGUARD_API_URL = "http://127.0.0.1:8080/api"
 
 [services.production.health.startup]
 path = "/api/healthz"
