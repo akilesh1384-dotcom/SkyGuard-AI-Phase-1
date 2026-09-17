@@ -11,6 +11,26 @@ env = { "CI" = "true" }
 [workflows]
 runButton = "Project"
 
+[[workflows.workflow]]
+name = "Project"
+mode = "parallel"
+author = "user"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "python -m uvicorn app.main:app --app-dir ml-service --host 0.0.0.0 --port 8001"
+waitForPort = 8001
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=8080 pnpm --filter @workspace/api-server run dev"
+waitForPort = 8080
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "PORT=5000 BASE_PATH=/ pnpm --filter @workspace/skyguard-ai run dev"
+waitForPort = 5000
+
 [agent]
 stack = "PNPM_WORKSPACE"
 expertMode = true
@@ -30,3 +50,7 @@ externalPort = 5000
 [[ports]]
 localPort = 8080
 externalPort = 8080
+
+[[ports]]
+localPort = 8001
+externalPort = 8001
