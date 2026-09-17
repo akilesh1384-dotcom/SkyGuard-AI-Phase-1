@@ -4,6 +4,9 @@ import asyncio
 import logging
 from collections.abc import Sequence
 
+import numpy as np
+import shap
+
 from .baseline import Baseline, BaselineManager
 from .config import Settings
 from .data_client import SkyGuardDataClient, reading_is_faulty
@@ -13,7 +16,7 @@ from .calibrated_fusion import CalibratedScoreFusion
 from .alert_state import AlertStateManager
 from .aws_analysis import AwsAnalysisEngine
 from .sensor_mode import SensorMode
-from .models import AnalyzeResponse, AnomalyResult, EngineeredFeatures, EventDetectionMetrics, EventLatency, EvaluationMetrics, EvaluationResponse, GroundTruthEvent, MlServiceStatus, SensorReading
+from .models import AnalyzeResponse, AnomalyResult, DetectorResult, EngineeredFeatures, EventDetectionMetrics, EventLatency, EvaluationMetrics, EvaluationResponse, GroundTruthEvent, MlServiceStatus, SensorReading, ShapContribution
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +97,74 @@ class AnalysisEngine:
         ml_detector.fit(baseline_features)
         statistical_results = StatisticalDetector(threshold=self.settings.anomaly_threshold).detect(features)
         ml_results = ml_detector.detect(features)
+        ml_results = self._attach_shap(ml_detector, features, ml_results)
         diagnostic_results = SensorDiagnosticDetector(frozen_consecutive=self.settings.diagnostic_frozen_consecutive, frozen_tolerance=self.settings.diagnostic_frozen_tolerance, expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds, threshold=self.settings.anomaly_threshold).detect(features)
         multivariate_detector = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold)
         multivariate_detector.fit(baseline_features)
         multivariate_results = multivariate_detector.detect(features)
         fused_results = CalibratedScoreFusion(statistical_weight=self.settings.statistical_weight, ml_weight=self.settings.ml_weight, threshold=self.settings.anomaly_threshold).fuse(statistical_results, ml_results, diagnostic_results, multivariate_results)
         return AlertStateManager(clear_after_normals=3).apply(fused_results)
+
+    @staticmethod
+    def _attach_shap(
+        detector: MlDetector,
+        features: Sequence[EngineeredFeatures],
+        results: Sequence[DetectorResult],
+    ) -> list[DetectorResult]:
+        """Attach Tree SHAP explanations for the FULL-mode Isolation Forest."""
+        if not results:
+            return list(results)
+        try:
+            explainer = shap.TreeExplainer(detector.model)
+            expected = np.asarray(explainer.expected_value).reshape(-1)
+            base_value = float(expected[0]) if expected.size else None
+
+            scoreable = [feature for feature in features if feature.valid_for_scoring]
+            if not scoreable:
+                return list(results)
+            matrix = np.asarray([feature.vector() for feature in scoreable], dtype=float)
+            values = np.asarray(explainer.shap_values(matrix))
+            if values.ndim == 3:
+                values = values[:, 0, :]
+            if values.ndim == 1:
+                values = values.reshape(1, -1)
+
+            shap_by_timestamp: dict[object, tuple[float | None, tuple[ShapContribution, ...]]] = {}
+            feature_names = EngineeredFeatures.feature_names
+            for feature, row_values in zip(scoreable, values):
+                contributions = [
+                    ShapContribution(
+                        feature=name,
+                        value=float(feature.vector()[index]),
+                        shap_value=float(shap_value),
+                        direction=(
+                            "increases_anomaly"
+                            if float(shap_value) < 0
+                            else "decreases_anomaly"
+                        ),
+                    )
+                    for index, (name, shap_value) in enumerate(zip(feature_names, np.asarray(row_values).reshape(-1)))
+                ]
+                contributions.sort(key=lambda item: abs(item.shap_value), reverse=True)
+                shap_by_timestamp[feature.timestamp] = (base_value, tuple(contributions))
+
+            output: list[DetectorResult] = []
+            for result in results:
+                base, contributions = shap_by_timestamp.get(result.timestamp, (None, ()))
+                output.append(
+                    DetectorResult(
+                        timestamp=result.timestamp,
+                        score=result.score,
+                        is_anomaly=result.is_anomaly,
+                        reasons=result.reasons,
+                        shap_base_value=base,
+                        shap_contributions=contributions,
+                    )
+                )
+            return output
+        except Exception:
+            logger.exception("Unable to calculate FULL-mode SHAP explanations")
+            return list(results)
 
     async def get_status(self, sensor_mode: str | None = None) -> MlServiceStatus:
         mode = self.normalize_mode(sensor_mode)
