@@ -18,7 +18,7 @@ author = "user"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "python -m uvicorn app.main:app --app-dir ml-service --host 0.0.0.0 --port 8001"
+args = "cd ml-service && python -m uvicorn app.main:app --host 0.0.0.0 --port 8001"
 waitForPort = 8001
 
 [[workflows.workflow.tasks]]
