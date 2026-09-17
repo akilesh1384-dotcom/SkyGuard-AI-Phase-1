@@ -27,8 +27,11 @@ class Settings:
     diagnostic_frozen_tolerance: float = float(
         os.getenv("SKYGUARD_DIAGNOSTIC_FROZEN_TOLERANCE", "0.001")
     )
+    # Physical ESP32 telemetry is sent about every 2 seconds. The missing-data
+    # detector applies a 1.5x tolerance, so normal network jitter is allowed
+    # up to roughly 3 seconds instead of being mistaken for packet loss.
     diagnostic_expected_interval_seconds: float = float(
-        os.getenv("SKYGUARD_DIAGNOSTIC_EXPECTED_INTERVAL_SECONDS", "1")
+        os.getenv("SKYGUARD_DIAGNOSTIC_EXPECTED_INTERVAL_SECONDS", "2")
     )
 
     @property
