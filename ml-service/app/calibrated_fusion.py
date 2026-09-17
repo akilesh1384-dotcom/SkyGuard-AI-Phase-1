@@ -107,6 +107,8 @@ class CalibratedScoreFusion:
                     fault_type=fault_type,
                     affected_variable=affected_variable,
                     reasons=tuple(reasons),
+                    shap_base_value=ml.shap_base_value,
+                    shap_contributions=list(ml.shap_contributions),
                 )
             )
 
