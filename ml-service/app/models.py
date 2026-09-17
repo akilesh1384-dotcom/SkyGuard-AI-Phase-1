@@ -90,6 +90,8 @@ class DetectorResult:
     score: float
     is_anomaly: bool
     reasons: tuple[str, ...] = ()
+    shap_base_value: float | None = None
+    shap_contributions: tuple["ShapContribution", ...] = ()
 
 
 @dataclass(frozen=True)
