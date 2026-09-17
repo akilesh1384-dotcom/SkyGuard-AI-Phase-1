@@ -97,7 +97,10 @@ class AnalysisEngine:
         ml_detector.fit(baseline_features)
         statistical_results = StatisticalDetector(threshold=self.settings.anomaly_threshold).detect(features)
         ml_results = ml_detector.detect(features)
-        ml_results = self._attach_shap(ml_detector, features, ml_results)
+        # Explain only the latest point. The dashboard requests the latest
+        # result, while calculating SHAP for thousands of historical rows on
+        # every refresh is unnecessary and can make TreeSHAP fragile/slow.
+        ml_results = self._attach_shap(ml_detector, features, baseline_features, ml_results)
         diagnostic_results = SensorDiagnosticDetector(frozen_consecutive=self.settings.diagnostic_frozen_consecutive, frozen_tolerance=self.settings.diagnostic_frozen_tolerance, expected_interval_seconds=self.settings.diagnostic_expected_interval_seconds, threshold=self.settings.anomaly_threshold).detect(features)
         multivariate_detector = CalibratedMultivariateDetector(threshold=self.settings.multivariate_threshold)
         multivariate_detector.fit(baseline_features)
@@ -109,41 +112,52 @@ class AnalysisEngine:
     def _attach_shap(
         detector: MlDetector,
         features: Sequence[EngineeredFeatures],
+        baseline_features: Sequence[EngineeredFeatures],
         results: Sequence[DetectorResult],
     ) -> list[DetectorResult]:
-        """Attach robust TreeSHAP explanations for the FULL-mode Isolation Forest."""
+        """Attach TreeSHAP to the latest FULL-mode Isolation Forest result."""
         if not results:
             return list(results)
 
-        try:
-            scoreable = [feature for feature in features if feature.valid_for_scoring]
-            if not scoreable:
-                return list(results)
+        latest = results[-1]
+        latest_feature = next(
+            (feature for feature in features if feature.timestamp == latest.timestamp),
+            None,
+        )
+        if latest_feature is None or not latest_feature.valid_for_scoring:
+            return list(results)
 
-            matrix = np.asarray([feature.vector() for feature in scoreable], dtype=float)
-            feature_count = matrix.shape[1]
+        try:
             feature_names = tuple(EngineeredFeatures.feature_names)
+            target_matrix = np.asarray([latest_feature.vector()], dtype=float)
+            background_matrix = np.asarray(
+                [feature.vector() for feature in baseline_features[-60:] if feature.valid_for_scoring],
+                dtype=float,
+            )
+            if background_matrix.size == 0:
+                background_matrix = target_matrix
+
+            feature_count = target_matrix.shape[1]
             if len(feature_names) != feature_count:
                 raise ValueError(
                     f"FULL SHAP feature mismatch: model has {feature_count} columns, "
                     f"but {len(feature_names)} feature names are defined"
                 )
 
-            # Explain the exact Isolation Forest model used by the detector.
-            # check_additivity=False is intentional here because Isolation
-            # Forest exposes a raw tree output whose SHAP decomposition can
-            # differ slightly numerically from sklearn's decision_function.
-            explainer = shap.TreeExplainer(detector.model)
+            # Supplying a small normal baseline makes the SHAP background
+            # explicit and avoids explaining thousands of historical rows.
+            explainer = shap.TreeExplainer(
+                detector.model,
+                data=background_matrix,
+                feature_perturbation="interventional",
+            )
             expected = np.asarray(explainer.expected_value).reshape(-1)
             base_value = float(expected[0]) if expected.size else None
             values = np.asarray(
-                explainer.shap_values(matrix, check_additivity=False),
+                explainer.shap_values(target_matrix, check_additivity=False),
                 dtype=float,
             )
 
-            # SHAP 0.52 can represent a single tree output as either
-            # (samples, features) or (samples, features, 1), depending on the
-            # underlying sklearn model. Normalize both forms explicitly.
             if values.ndim == 3:
                 if values.shape[1] == feature_count:
                     values = values[:, :, 0]
@@ -151,46 +165,45 @@ class AnalysisEngine:
                     values = values[:, 0, :]
                 else:
                     raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
-            elif values.ndim == 2:
-                if values.shape[1] != feature_count:
-                    raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
+            elif values.ndim == 2 and values.shape[1] == feature_count:
+                pass
             elif values.ndim == 1 and values.size == feature_count:
                 values = values.reshape(1, -1)
             else:
                 raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
 
-            shap_by_timestamp: dict[object, tuple[float | None, tuple[ShapContribution, ...]]] = {}
-            for feature, row_values in zip(scoreable, values):
-                row = feature.vector()
-                contributions = [
-                    ShapContribution(
-                        feature=name,
-                        value=float(row[index]),
-                        shap_value=float(shap_value),
-                        direction=(
-                            "increases_anomaly"
-                            if float(shap_value) < 0
-                            else "decreases_anomaly"
-                        ),
-                    )
-                    for index, (name, shap_value) in enumerate(zip(feature_names, row_values))
-                ]
-                contributions.sort(key=lambda item: abs(item.shap_value), reverse=True)
-                shap_by_timestamp[feature.timestamp] = (base_value, tuple(contributions))
+            row_values = values[0]
+            row = latest_feature.vector()
+            contributions = [
+                ShapContribution(
+                    feature=name,
+                    value=float(row[index]),
+                    shap_value=float(shap_value),
+                    direction=(
+                        "increases_anomaly"
+                        if float(shap_value) < 0
+                        else "decreases_anomaly"
+                    ),
+                )
+                for index, (name, shap_value) in enumerate(zip(feature_names, row_values))
+            ]
+            contributions.sort(key=lambda item: abs(item.shap_value), reverse=True)
 
             output: list[DetectorResult] = []
             for result in results:
-                base, contributions = shap_by_timestamp.get(result.timestamp, (None, ()))
-                output.append(
-                    DetectorResult(
-                        timestamp=result.timestamp,
-                        score=result.score,
-                        is_anomaly=result.is_anomaly,
-                        reasons=result.reasons,
-                        shap_base_value=base,
-                        shap_contributions=contributions,
+                if result.timestamp == latest.timestamp:
+                    output.append(
+                        DetectorResult(
+                            timestamp=result.timestamp,
+                            score=result.score,
+                            is_anomaly=result.is_anomaly,
+                            reasons=result.reasons,
+                            shap_base_value=base_value,
+                            shap_contributions=tuple(contributions),
+                        )
                     )
-                )
+                else:
+                    output.append(result)
             return output
         except Exception:
             logger.exception("Unable to calculate FULL-mode SHAP explanations")
