@@ -111,31 +111,61 @@ class AnalysisEngine:
         features: Sequence[EngineeredFeatures],
         results: Sequence[DetectorResult],
     ) -> list[DetectorResult]:
-        """Attach Tree SHAP explanations for the FULL-mode Isolation Forest."""
+        """Attach robust TreeSHAP explanations for the FULL-mode Isolation Forest."""
         if not results:
             return list(results)
-        try:
-            explainer = shap.TreeExplainer(detector.model)
-            expected = np.asarray(explainer.expected_value).reshape(-1)
-            base_value = float(expected[0]) if expected.size else None
 
+        try:
             scoreable = [feature for feature in features if feature.valid_for_scoring]
             if not scoreable:
                 return list(results)
+
             matrix = np.asarray([feature.vector() for feature in scoreable], dtype=float)
-            values = np.asarray(explainer.shap_values(matrix))
+            feature_count = matrix.shape[1]
+            feature_names = tuple(EngineeredFeatures.feature_names)
+            if len(feature_names) != feature_count:
+                raise ValueError(
+                    f"FULL SHAP feature mismatch: model has {feature_count} columns, "
+                    f"but {len(feature_names)} feature names are defined"
+                )
+
+            # Explain the exact Isolation Forest model used by the detector.
+            # check_additivity=False is intentional here because Isolation
+            # Forest exposes a raw tree output whose SHAP decomposition can
+            # differ slightly numerically from sklearn's decision_function.
+            explainer = shap.TreeExplainer(detector.model)
+            expected = np.asarray(explainer.expected_value).reshape(-1)
+            base_value = float(expected[0]) if expected.size else None
+            values = np.asarray(
+                explainer.shap_values(matrix, check_additivity=False),
+                dtype=float,
+            )
+
+            # SHAP 0.52 can represent a single tree output as either
+            # (samples, features) or (samples, features, 1), depending on the
+            # underlying sklearn model. Normalize both forms explicitly.
             if values.ndim == 3:
-                values = values[:, 0, :]
-            if values.ndim == 1:
+                if values.shape[1] == feature_count:
+                    values = values[:, :, 0]
+                elif values.shape[2] == feature_count:
+                    values = values[:, 0, :]
+                else:
+                    raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
+            elif values.ndim == 2:
+                if values.shape[1] != feature_count:
+                    raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
+            elif values.ndim == 1 and values.size == feature_count:
                 values = values.reshape(1, -1)
+            else:
+                raise ValueError(f"Unexpected FULL SHAP shape: {values.shape}")
 
             shap_by_timestamp: dict[object, tuple[float | None, tuple[ShapContribution, ...]]] = {}
-            feature_names = EngineeredFeatures.feature_names
             for feature, row_values in zip(scoreable, values):
+                row = feature.vector()
                 contributions = [
                     ShapContribution(
                         feature=name,
-                        value=float(feature.vector()[index]),
+                        value=float(row[index]),
                         shap_value=float(shap_value),
                         direction=(
                             "increases_anomaly"
@@ -143,7 +173,7 @@ class AnalysisEngine:
                             else "decreases_anomaly"
                         ),
                     )
-                    for index, (name, shap_value) in enumerate(zip(feature_names, np.asarray(row_values).reshape(-1)))
+                    for index, (name, shap_value) in enumerate(zip(feature_names, row_values))
                 ]
                 contributions.sort(key=lambda item: abs(item.shap_value), reverse=True)
                 shap_by_timestamp[feature.timestamp] = (base_value, tuple(contributions))
